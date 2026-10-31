@@ -1,588 +1,588 @@
-# Chapter 19: Distributed Message Queue
+# 19장: 분산 메시지 큐
 
-## Introduction
+## 소개
 
-We'll be designing a **distributed message queue** in this chapter.
+이 장에서는 **분산 메시지 큐(distributed message queue)** 를 설계한다.
 
-Benefits of message queues:
-- **Decoupling**: Eliminates tight coupling between components. Let them update separately.
-- **Improved scalability**: Producers and consumers can be scaled independently based on traffic.
-- **Increased availability**: If one part of the system goes down, other parts continue interacting with the queue.
-- **Better performance**: Producers can produce messages without waiting for consumer confirmation.
+메시지 큐의 이점:
+- **결합도 완화(decoupling)**: 컴포넌트 사이의 강한 결합을 없애 각각 독립적으로 갱신할 수 있게 한다.
+- **규모 확장성 개선**: 생산자와 소비자를 트래픽에 따라 독립적으로 확장할 수 있다.
+- **가용성 개선**: 시스템의 한 부분에 장애가 나도 다른 부분은 계속 큐와 상호작용할 수 있다.
+- **성능 개선**: 생산자는 소비자의 확인을 기다리지 않고 메시지를 만들 수 있다.
 
-Some popular message queue implementations - Kafka, RabbitMQ, RocketMQ, Apache Pulsar, ActiveMQ, ZeroMQ.
+널리 쓰이는 메시지 큐 구현체로는 Kafka, RabbitMQ, RocketMQ, Apache Pulsar, ActiveMQ, ZeroMQ 등이 있다.
 
-Strictly speaking, Kafka and Pulsar are not message queues. They are event streaming platforms.
-There is however a convergence of features which blurs the distinction between message queues and event streaming platforms.
+엄밀히 말하면 Kafka와 Pulsar는 메시지 큐가 아니라 이벤트 스트리밍 플랫폼이다.
+하지만 기능이 서로 수렴하면서 메시지 큐와 이벤트 스트리밍 플랫폼의 경계가 흐려지고 있다.
 
-In this chapter, we'll be building a message queue with support for more advanced features such as long data retention, repeated message consumption, etc.
-
----
-
-## Step 1: Understand the Problem and Establish Design Scope
-
-Message queues ought to support few basic features - producers produce messages and consumers consume them.
-There are, however, different considerations with regards to performance, message delivery, data retention, etc.
-
-Here's a set of potential questions between Candidate and Interviewer:
- * C: What's the format and average message size? Is it text only?
- * I: Messages are text-only and usually a few KBs
- * C: Can messages be repeatedly consumed?
- * I: Yes, messages can be repeatedly consumed by different consumers. This is an added requirement, which traditional message queues don't support.
- * C: Are messages consumed in the same order they were produced?
- * I: Yes, order guarantee should be preserved. This is an added requirement, traditional message queues don't support this.
- * C: What are the data retention requirements?
- * I: Messages need to have a retention of two weeks. This is an added requirement.
- * C: How many producers and consumers do we want to support?
- * I: The more, the better.
- * C: What data delivery semantic do we want to support? At-most-once, at-least-once, exactly-once?
- * I: We definitely want to support at-least-once. Ideally, we can support all and make them configurable.
- * C: What's the target throughput for end-to-end latency?
- * I: It should support high throughput for use cases like log aggregation and low throughput for more traditional use cases.
-
-### **Functional requirements**
-
- * Producers send messages to a message queue
- * Consumers consume messages from the queue
- * Messages can be consumed once or repeatedly
- * Historical data can be truncated
- * Message size is in the KB range
- * Order of messages needs to be preserved
- * Data delivery semantics is configurable - at-most-once/at-least-once/exactly-once.
-
-### **Non-functional requirements**
-
-- **High throughput or low latency**: Configurable based on use-case
-- **Scalable**: system should be distributed and support a sudden surge in message volume
-- **Persistent and durable**: data should be persisted on disk and replicated among nodes
-
-Traditional message queues typically don't support data retention and don't provide ordering guarantees. This greatly simplifies the design and we'll discuss it.
+이 장에서는 데이터 장기 보관, 메시지 반복 소비 같은 고급 기능을 지원하는 메시지 큐를 만든다.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## 1단계: 문제 이해 및 설계 범위 확정
 
-Key components of a message queue:
+메시지 큐는 기본적으로 생산자가 메시지를 만들고 소비자가 그것을 소비하는 기능을 지원해야 한다.
+하지만 성능, 메시지 전달 방식, 데이터 보관 등 고려할 점이 여럿 있다.
 
-<div style="margin-left:3rem">
-    <img src="./images/message-queue-components.png" alt="message-queue-components" width="500" />
-</div>
+지원자와 면접관 사이에 오갈 만한 질문(지: 지원자, 면: 면접관):
+ * 지: 메시지의 형태와 평균 크기는 어떻게 되나요? 텍스트만 지원하나요?
+ * 면: 메시지는 텍스트만 지원하며 보통 수 KB입니다.
+ * 지: 메시지를 반복적으로 소비할 수 있어야 하나요?
+ * 면: 네, 여러 소비자가 같은 메시지를 반복해서 소비할 수 있어야 합니다. 전통적인 메시지 큐는 지원하지 않는 추가 요구 사항입니다.
+ * 지: 메시지는 생산된 순서대로 소비되어야 하나요?
+ * 면: 네, 순서가 보장되어야 합니다. 이것도 전통적인 메시지 큐는 지원하지 않는 추가 요구 사항입니다.
+ * 지: 데이터 보관 요구 사항은 어떻게 되나요?
+ * 면: 메시지는 2주 동안 보관해야 합니다. 추가 요구 사항입니다.
+ * 지: 생산자와 소비자는 몇 개나 지원해야 하나요?
+ * 면: 많을수록 좋습니다.
+ * 지: 어떤 데이터 전달 방식을 지원해야 하나요? 최대 한 번, 최소 한 번, 정확히 한 번 중에서요.
+ * 면: 최소 한 번은 반드시 지원해야 합니다. 이상적으로는 모두 지원하고 설정으로 고를 수 있으면 좋겠습니다.
+ * 지: 목표 처리량과 종단 간 지연 시간은 어느 정도인가요?
+ * 면: 로그 수집 같은 용도를 위해 높은 처리량을 지원해야 하고, 전통적인 용도를 위해 낮은 처리량도 지원해야 합니다.
 
- * Producer sends messages to a queue
- * Consumer subscribes to a queue and consumes the subscribed messages
- * Message queue is a service in the middle which decouples producers from consumers, letting them scale independently.
- * Producer and consumer are both clients, while the message queue is the server.
+### **기능 요구 사항**
 
-### **Messaging models**
+ * 생산자는 메시지 큐에 메시지를 보낸다.
+ * 소비자는 큐에서 메시지를 소비한다.
+ * 메시지는 한 번 또는 반복해서 소비할 수 있다.
+ * 오래된 이력 데이터는 삭제할 수 있다.
+ * 메시지 크기는 KB 수준이다.
+ * 메시지 순서가 보장되어야 한다.
+ * 데이터 전달 방식(최대 한 번/최소 한 번/정확히 한 번)은 설정할 수 있어야 한다.
 
-The first type of messaging model is point-to-point and it's commonly found in traditional message queues:
+### **비기능 요구 사항**
 
-<div style="margin-left:3rem">
-    <img src="./images/point-to-point-model.png" alt="point-to-point-model" width="500" />
-</div>
+- **높은 처리량 또는 낮은 지연 시간**: 용도에 따라 설정할 수 있어야 한다.
+- **규모 확장성**: 시스템은 분산되어 있어야 하며, 메시지 양이 갑자기 늘어나도 감당해야 한다.
+- **지속성과 내구성**: 데이터는 디스크에 저장되고 여러 노드에 복제되어야 한다.
 
- * A message is sent to a queue and it's consumed by exactly one consumer.
- * There can be multiple consumers, but a message is consumed only once.
- * Once message is acknowledged as consumed, it is removed from the queue.
- * There is no data retention in the point-to-point model, but there is such in our design.
-
-On the other hand, the publish-subscribe model is more common for event streaming platforms:
-
-<div style="margin-left:3rem">
-    <img src="./images/publish-subscribe-model.png" alt="publish-subscribe-model" width="500" />
-</div>
-
- * In this model, messages are associated to a topic.
- * Consumers are subscribed to a topic and they receive all messages sent to this topic.
-
-### **Topics, partitions and brokers**
-
-What if the data volume for a topic is too large? One way to scale is by splitting a topic into partitions (aka sharding):
-
-<div style="margin-left:3rem">
-    <img src="./images/partitions.png" alt="partitions" width="500" />
-</div>
-
- * Messages sent to a topic are evenly distributed across partitions
- * The servers that host partitions are called brokers
- * Each topic operates like a queue using FIFO for message processing. Message order is preserved within a partition.
- * The position of a message within the partition is called an **offset**.
- * Each message produced is sent to a specific partition. A partition key specifies which partition a message should land in. 
-   * Eg a `user_id` can be used as a partition key to guarantee order of messages for the same user.
- * Each consumer subscribes to one or more partitions. When there are multiple consumers for the same messages, they form a consumer group.
-
-### **Consumer groups**
-
-Consumer groups are a set of consumers working together to consume messages from a topic:
-
-<div style="margin-left:3rem">
-    <img src="./images/consumer-groups.png" alt="consumer-groups" width="500" />
-</div>
-
- * Messages are replicated per consumer group (not per consumer).
- * Each consumer group maintains its own offset.
- * Reading messages in parallel by a consumer group improves throughput but hampers the ordering guarantee.
- * This can be mitigated by only allowing one consumer from a group to be subscribed to a partition. 
- * This means that we can't have more consumers in a group than there are partitions.
-
-### **High-level architecture**
-
-<div style="margin-left:3rem">
-    <img src="./images/high-level-architecture.png" alt="high-level-architecture" width="500" />
-</div>
-
-- **Clients**: producer and consumer. Producer pushes messages to a designated topic. Consumer group subscribes to messages from a topic.
-- **Brokers**: hold multiple partitions. A partition holds a subset of messages for a topic.
-- **Data storage**: stores messages in partitions.
-- **State storage**: keeps the consumer states.
-- **Metadata storage**: stores configuration and topic properties
-- **Coordination service**: responsible for service discovery (which brokers are alive) and leader election (which broker is leader, responsible for assigning partitions).
+전통적인 메시지 큐는 보통 데이터 보관을 지원하지 않고 순서도 보장하지 않는다. 이 덕분에 설계가 훨씬 단순해지는데, 이에 대해 논의해 보자.
 
 ---
 
-## Step 3: Design Deep Dive
+## 2단계: 개략적인 설계안 제시 및 동의 구하기
 
-In order to achieve high throughput and preserve the high data retention requirement, we made some important design choices:
- * We chose an on-disk data structure which takes advantage of the properties of modern HDD and disk caching strategies of modern OS-es.
- * The message data structure is immutable to avoid extra copying, which we want to avoid in a high volume/high traffic system.
- * We designed our writes around batching as small I/O is an enemy of high throughput.
-
-### **Data storage**
-
-In order to find the best data store for messages, we must examine a message's properties:
- * Write-heavy, read-heavy
- * No update/delete operations. In traditional message queues, there is a "delete" operation as messages are not retained.
- * Predominantly sequential read/write access pattern.
-
-What are our options:
-- **Database**: not ideal as typical databases don't support well both write and read heavy systems.
-- **Write-ahead log (WAL)**: a plain text file which only supports appending to it and is very HDD-friendly. 
-  * We split partitions into segments to avoid maintaining a very large file.
-  * Old segments are read-only. Writes are accepted by latest segment only.
+메시지 큐의 핵심 컴포넌트:
 
 <div style="margin-left:3rem">
-    <img src="./images/wal-example.png" alt="wal-example" width="500" />
+    <img src="./images/message-queue-components.png" alt="메시지 큐 컴포넌트" width="500" />
 </div>
 
-WAL files are extremely efficient when used with traditional HDDs. 
+ * 생산자는 메시지를 큐에 보낸다.
+ * 소비자는 큐를 구독하고 구독한 메시지를 소비한다.
+ * 메시지 큐는 생산자와 소비자 사이에서 둘의 결합을 끊어 각각 독립적으로 확장할 수 있게 해 주는 서비스다.
+ * 생산자와 소비자는 모두 클라이언트이고, 메시지 큐는 서버다.
 
-There is a misconception that HDD acces is slow, but that hugely depends on the access pattern.
-When the access pattern is sequential (as in our case), HDDs can achieve several MB/s write/read speed which is sufficient for our needs.
-We also piggyback on the fact that the OS caches disk data in memory aggressively.
+### **메시지 모델**
 
-### **Message data structure**
-
-It is important that the message schema is compliant between producer, queue and consumer to avoid extra copying. This allows much more efficient processing.
-
-Example message structure:
+첫 번째 메시지 모델은 일대일(point-to-point) 모델로, 전통적인 메시지 큐에서 흔히 볼 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/message-structure.png" alt="message-structure" width="500" />
+    <img src="./images/point-to-point-model.png" alt="일대일 모델" width="500" />
 </div>
 
-The key of the message specifies which partition a message belongs to. An example mapping is `hash(key) % numPartitions`.
-For more flexibility, the producer can override default keys in order to control which partitions messages are distributed to.
+ * 큐에 보낸 메시지는 정확히 한 소비자만 소비한다.
+ * 소비자가 여럿일 수 있지만, 메시지는 한 번만 소비된다.
+ * 메시지가 소비되었다는 확인(acknowledgment)을 받으면 큐에서 삭제된다.
+ * 일대일 모델에는 데이터 보관 기능이 없지만, 이번 설계에는 있다.
 
-The message value is the payload of a message. It can be plaintext or a compressed binary block.
-
-**Note:** Message keys, unlike traditional KV stores, need not be unique. It is acceptable to have duplicate keys and for it to even be missing.
-
-Other message files:
-- **Topic**: topic the message belongs to
-- **Partition**: The ID of the partition a message belongs to
-- **Offset**: The position of the message in a partition. A message can be located via `topic`, `partition`, `offset`.
-- **Timestamp**: When the message is stored
-- **Size**: the size of this message
-- **CRC**: checksum to ensure message integrity
-
-Additional features such as filtering can be supported by adding additional fields.
-
-### **Batching**
-
-Batching is critical for the performance of our system. We apply it in the producer, consumer and message queue.
-
-It is critical because:
- * It allows the operating system to group messages together, amortizing the cost of expensive network round trips
- * Messages are written to the WAL in groups sequentially, which leads to a lot of sequential writes and disk caching.
-
-There is a trade-off between latency and throughput:
- * High batching leads to high throughput and higher latency. 
- * Less batching leads to lower throughput and lower latency.
-
-If we need to support lower latency since the system is deployed as a traditional message queue, the system could be tuned to use a smaller batch size.
-
-If tuned for throughput, we might need more partitions per topic to compensate for the slower sequential disk write throughput.
-
-### **Producer flow**
-
-If a producer wants to send a message to a partition, which broker should it connect to?
-
-One option is to introduce a routing layer, which route messages to the correct broker. If replication is enabled, the correct broker is the leader replica:
+반면 발행-구독(publish-subscribe) 모델은 이벤트 스트리밍 플랫폼에서 더 흔하다.
 
 <div style="margin-left:3rem">
-    <img src="./images/routing-layer.png" alt="routing-layer" width="500" />
+    <img src="./images/publish-subscribe-model.png" alt="발행-구독 모델" width="500" />
 </div>
 
- * Routing layer reads the replication plan from the metadata store and caches it locally.
- * Producer sends a message to the routing layer.
- * Message is forwarded to broker 1 who is the leader of the given partition
- * Follower replicas pull the new message from the leader. Once enough confirmations are received, the leader commits the data and responds to the producer.
+ * 이 모델에서 메시지는 토픽(topic)에 연결된다.
+ * 소비자는 토픽을 구독하고, 그 토픽으로 전송된 모든 메시지를 받는다.
 
-The reason for having replicas is to enable fault tolerance.
+### **토픽, 파티션, 브로커**
 
-This approach works but has some drawbacks:
- * Additional network hops due to the extra component
- * The design doesn't enable batching messages
-
-To mitigate these issues, we can embed the routing layer into the producer:
+토픽 하나의 데이터 양이 너무 많으면 어떻게 할까? 한 가지 확장 방법은 토픽을 여러 파티션으로 나누는 것이다(샤딩).
 
 <div style="margin-left:3rem">
-    <img src="./images/routing-layer-producer.png" alt="routing-layer-producer" width="500" />
+    <img src="./images/partitions.png" alt="파티션" width="500" />
 </div>
 
- * Fewer network hops lead to lower latency
- * Producers can control which partition a message is routed to
- * The buffer allows us to batch messages in-memory and send out larger batches in a single request, which increases throughput.
+ * 토픽으로 보낸 메시지는 파티션들에 고르게 분산된다.
+ * 파티션을 유지하는 서버를 브로커(broker)라고 한다.
+ * 각 토픽은 FIFO 큐처럼 메시지를 처리한다. 메시지 순서는 파티션 안에서 보장된다.
+ * 파티션 안에서 메시지의 위치를 **오프셋(offset)** 이라고 한다.
+ * 생산된 메시지는 특정 파티션으로 전송된다. 메시지가 어느 파티션으로 갈지는 파티션 키로 정한다.
+   * 예를 들어 `user_id`를 파티션 키로 쓰면 같은 사용자의 메시지 순서를 보장할 수 있다.
+ * 각 소비자는 하나 이상의 파티션을 구독한다. 같은 메시지를 소비하는 소비자가 여럿이면 소비자 그룹을 이룬다.
 
-The batch size choice is a classical trade-off between throughput and latency. 
+### **소비자 그룹**
+
+소비자 그룹(consumer group)은 토픽에서 메시지를 소비하기 위해 함께 일하는 소비자들의 집합이다.
 
 <div style="margin-left:3rem">
-    <img src="./images/batch-size-throughput-vs-latency.png" alt="batch-size-throughput-vs-latency" width="500" />
+    <img src="./images/consumer-groups.png" alt="소비자 그룹" width="500" />
 </div>
 
- * Larger batch size leads to longer wait time before batch is committed. 
- * Smaller batch size leads to request being sent sooner and having lower latency but lower throughput.
+ * 메시지는 소비자 단위가 아니라 소비자 그룹 단위로 복제된다.
+ * 소비자 그룹마다 자신의 오프셋을 따로 관리한다.
+ * 소비자 그룹이 메시지를 병렬로 읽으면 처리량은 늘지만 순서 보장이 어려워진다.
+ * 이 문제는 한 파티션을 그룹 안의 한 소비자만 구독하게 해서 완화할 수 있다.
+ * 따라서 그룹 안의 소비자 수는 파티션 수보다 많을 수 없다.
 
-### **Consumer flow**
-
-The consumer specifies its offset in a partition and receives a chunk of messages, beginning from that offset:
+### **개략적인 아키텍처**
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-example.png" alt="consumer-example" width="500" />
+    <img src="./images/high-level-architecture.png" alt="개략적인 아키텍처" width="500" />
 </div>
 
-One important consideration when designing the consumer is whether to use a push or a pull model:
-- **Push model**: leads to lower latency as broker pushes messages to consumer as it receives them.
-  * However, if rate of consumption falls behind the rate of production, the consumer can be overwhelmed.
-  * It is challenging to deal with consumers with varying processing power as the broker controls the rate of consumption.
-- **Pull model**: leads to the consumer controlling the consumption rate. 
-  * If rate of consumption is slow, consumer will not be overwhelmed and we can scale it to catch up.
-  * The pull model is more suitable for batch processing, because with the push model, the broker can't know how many messages a consumer can handle. 
-  * With the pull model, on the other hand, consumers can aggressively fetch large message batches.
-  * The down side is the higher latency and extra network calls when there are no new messages. Latter issue can be mitigated using long polling.
+- **클라이언트**: 생산자와 소비자. 생산자는 지정된 토픽으로 메시지를 보낸다. 소비자 그룹은 토픽의 메시지를 구독한다.
+- **브로커**: 여러 파티션을 유지한다. 파티션은 토픽의 메시지 일부를 갖는다.
+- **데이터 저장소**: 파티션 안에 메시지를 저장한다.
+- **상태 저장소**: 소비자 상태를 저장한다.
+- **메타데이터 저장소**: 설정과 토픽 속성을 저장한다.
+- **조정 서비스(coordination service)**: 서비스 탐색(어떤 브로커가 살아 있는지)과 리더 선출(어느 브로커가 리더로서 파티션을 할당할지)을 맡는다.
 
-Hence, most message queues (and us) choose the pull model.
+---
+
+## 3단계: 상세 설계
+
+높은 처리량을 달성하고 데이터 장기 보관 요구 사항을 만족하기 위해 몇 가지 중요한 설계 결정을 내렸다.
+ * 현대 HDD의 특성과 현대 운영체제의 디스크 캐시 전략을 잘 활용하는 디스크 기반 자료 구조를 택했다.
+ * 메시지 자료 구조를 변경 불가능(immutable)하게 해 불필요한 복사를 피했다. 대용량·고트래픽 시스템에서는 복사를 피하는 것이 중요하다.
+ * 작은 I/O는 높은 처리량의 적이므로, 일괄 처리(batching)를 중심으로 쓰기 연산을 설계했다.
+
+### **데이터 저장소**
+
+메시지에 가장 적합한 데이터 저장소를 찾으려면 메시지의 특성부터 살펴봐야 한다.
+ * 쓰기와 읽기가 모두 빈번하다.
+ * 갱신/삭제 연산이 없다. 전통적인 메시지 큐에는 메시지를 보관하지 않으므로 '삭제' 연산이 있다.
+ * 순차적인 읽기/쓰기가 대부분이다.
+
+선택지는 다음과 같다.
+- **데이터베이스**: 일반적인 데이터베이스는 쓰기와 읽기가 모두 많은 시스템을 잘 지원하지 못하므로 이상적이지 않다.
+- **선행 기록 로그(write-ahead log, WAL)**: 새 항목을 추가하기만 하는 일반 파일로, HDD와 아주 잘 맞는다.
+  * 파일 하나가 너무 커지지 않도록 파티션을 세그먼트(segment)로 나눈다.
+  * 오래된 세그먼트는 읽기 전용이다. 쓰기는 가장 최근 세그먼트에만 허용한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-flow.png" alt="consumer-flow" width="500" />
+    <img src="./images/wal-example.png" alt="WAL 예시" width="500" />
 </div>
 
- * A new consumer subscribes to topic A and joins group 1.
- * The correct broker node is found by hashing the group name. This way, all consumers in a group connect to the same broker.
- * Note that this consumer group coordinator is different from the coordination service (ZooKeeper).
- * Coordinator confirms that the consumer has joined the group and assigns partition 2 to that consumer.
- * There are different partition assignment strategies - round-robin, range, etc.
- * Consumer fetches latest messages from the last offset. The state storage keeps the consumer offsets.
- * Consumer processes messages and commits the offset to the broker. The order of those operations affects the message delivery semantics.
+WAL 파일은 전통적인 HDD와 함께 쓸 때 매우 효율적이다.
 
-### **Consumer rebalancing**
+HDD 접근은 느리다는 오해가 있지만, 이는 접근 패턴에 크게 좌우된다.
+이 경우처럼 접근 패턴이 순차적이면 HDD로도 충분한 수준의 MB/s 읽기/쓰기 속도를 낼 수 있다.
+또한 운영체제가 디스크 데이터를 메모리에 적극적으로 캐시한다는 점도 활용한다.
 
-Consumer rebalancing is responsible for deciding which consumers are responsible for which partition.
+### **메시지 자료 구조**
 
-This process occurs when a consumer joins/leaves or a partition is added/removed.
+불필요한 복사를 피하려면 생산자, 큐, 소비자 사이에서 메시지 스키마가 일치해야 한다. 그래야 훨씬 효율적으로 처리할 수 있다.
 
-The broker, acting as a coordinator plays a huge role in orchestrating the rebalancing workflow.
+메시지 구조의 예:
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-rebalancing.png" alt="consumer-rebalancing" width="500" />
+    <img src="./images/message-structure.png" alt="메시지 구조" width="500" />
 </div>
 
- * All consumers from the same group are connected to the same coordinator. The coordinator is found by hashing the group name.
- * When the consumer list changes, the coordinator chooses a new leader of the group.
- * The leader of the group calculates a new partition dispatch plan and reports it back to the coordinator, which broadcasts it to the other consumers.
+메시지 키는 메시지가 어느 파티션에 속할지 정한다. 대응 방식의 예로 `hash(key) % numPartitions`가 있다.
+더 유연하게 하려면 생산자가 기본 키 대응 방식을 재정의해, 메시지를 어느 파티션으로 분배할지 제어할 수 있다.
 
-When the coordinator stops receiving heartbeats from the consumers in a group, a rebalancing is triggered:
+메시지 값은 메시지의 페이로드다. 일반 텍스트일 수도, 압축된 이진 블록일 수도 있다.
+
+**참고:** 메시지 키는 일반적인 키-값 저장소의 키와 달리 유일할 필요가 없다. 키가 중복되어도 되고, 아예 없어도 된다.
+
+메시지의 기타 필드:
+- **토픽**: 메시지가 속한 토픽
+- **파티션**: 메시지가 속한 파티션의 ID
+- **오프셋**: 파티션 안에서 메시지의 위치. 메시지는 `topic`, `partition`, `offset`으로 찾을 수 있다.
+- **타임스탬프**: 메시지가 저장된 시각
+- **크기**: 메시지 크기
+- **CRC**: 메시지 무결성을 보장하기 위한 체크섬
+
+필터링 같은 추가 기능은 필드를 더 추가해 지원할 수 있다.
+
+### **일괄 처리**
+
+일괄 처리는 시스템 성능에 아주 중요하다. 생산자, 소비자, 메시지 큐 모두에 적용한다.
+
+일괄 처리가 중요한 이유:
+ * 운영체제가 메시지를 묶어 처리할 수 있게 해, 비싼 네트워크 왕복 비용을 분산시킨다.
+ * 메시지를 묶음 단위로 WAL에 순차 기록하므로, 순차 쓰기가 많아지고 디스크 캐시 효과가 커진다.
+
+지연 시간과 처리량 사이에는 트레이드오프가 있다.
+ * 묶음을 크게 하면 처리량은 늘지만 지연 시간도 길어진다.
+ * 묶음을 작게 하면 처리량은 줄지만 지연 시간도 짧아진다.
+
+시스템을 전통적인 메시지 큐로 배포해 낮은 지연 시간을 지원해야 한다면, 묶음 크기를 작게 조정하면 된다.
+
+처리량에 맞게 조정한다면, 느린 순차 디스크 쓰기 처리량을 보완하기 위해 토픽당 파티션 수를 늘려야 할 수도 있다.
+
+### **생산자 측 작업 흐름**
+
+생산자가 어떤 파티션에 메시지를 보내려면 어느 브로커에 연결해야 할까?
+
+한 가지 방법은 메시지를 올바른 브로커로 보내 주는 라우팅 계층을 두는 것이다. 복제를 사용한다면 올바른 브로커란 리더 사본이 있는 브로커다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-rebalance-example.png" alt="consumer-rebalance-example" width="500" />
+    <img src="./images/routing-layer.png" alt="라우팅 계층" width="500" />
 </div>
 
-Let's explore what happens when a consumer joins a group:
+ * 라우팅 계층은 메타데이터 저장소에서 사본 분산 계획을 읽어 로컬에 캐시한다.
+ * 생산자는 라우팅 계층으로 메시지를 보낸다.
+ * 메시지는 해당 파티션의 리더인 브로커 1로 전달된다.
+ * 팔로워 사본은 리더로부터 새 메시지를 가져간다. 충분한 수의 확인을 받으면 리더는 데이터를 커밋하고 생산자에게 응답한다.
+
+사본을 두는 이유는 결함 감내를 위해서다.
+
+이 방법은 동작하지만 몇 가지 단점이 있다.
+ * 컴포넌트가 하나 더 생기므로 네트워크 홉이 늘어난다.
+ * 메시지를 일괄 처리할 수 없는 설계다.
+
+이 문제를 완화하려면 라우팅 계층을 생산자 안에 넣으면 된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-join-group-usecase.png" alt="consumer-join-group-usecase" width="500" />
+    <img src="./images/routing-layer-producer.png" alt="생산자에 포함된 라우팅 계층" width="500" />
 </div>
 
- * Initially, only consumer A is in the group and it consumes all partitions.
- * Consumer B sends a request to join the group.
- * The coordinator notifies all group members that it's time to rebalance passively - as a response to the heartbeat.
- * Once all consumers rejoin the group, the coordinator chooses a leader and notifies the rest about the election result.
- * The leader generates the partition dispatch plan and sends it to the coordinator. Others wait for the dispatch plan.
- * Consumers start consuming from the newly assigned partitions.
+ * 네트워크 홉이 줄어 지연 시간이 짧아진다.
+ * 생산자가 메시지를 어느 파티션으로 보낼지 직접 제어할 수 있다.
+ * 버퍼에 메시지를 모아 두었다가 큰 묶음을 한 번의 요청으로 보낼 수 있어 처리량이 늘어난다.
 
-Here's what happens when a consumer leaves the group:
+묶음 크기를 정하는 것은 처리량과 지연 시간 사이의 전형적인 트레이드오프다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-leaves-group-usecase.png" alt="consumer-leaves-group-usecase" width="500" />
+    <img src="./images/batch-size-throughput-vs-latency.png" alt="묶음 크기에 따른 처리량과 지연 시간" width="500" />
 </div>
 
- * Consumer A and B are in the same group
- * Consumer B asks to leave the group
- * When coordinator receives A's heartbeat, it informs them that it's time to rebalance.
- * The rest of the steps are the same.
+ * 묶음이 크면 커밋되기까지 기다리는 시간이 길어진다.
+ * 묶음이 작으면 요청이 더 빨리 전송되어 지연 시간은 짧지만 처리량은 줄어든다.
 
-The process is similar when a consumer doesn't send a heartbeat for a long time:
+### **소비자 측 작업 흐름**
+
+소비자는 파티션 안의 오프셋을 지정하고, 그 오프셋부터 시작하는 메시지 묶음을 받는다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consumer-no-heartbeat-usecase.png" alt="consumer-no-heartbeat-usecase" width="500" />
+    <img src="./images/consumer-example.png" alt="소비자 예시" width="500" />
 </div>
 
-### **State storage**
+소비자를 설계할 때 중요한 고려 사항 하나는 푸시 모델과 풀 모델 중 무엇을 쓸지다.
+- **푸시 모델**: 브로커가 메시지를 받는 즉시 소비자에게 보내므로 지연 시간이 짧다.
+  * 하지만 소비 속도가 생산 속도를 따라가지 못하면 소비자에게 과부하가 걸릴 수 있다.
+  * 소비 속도를 브로커가 정하므로, 처리 능력이 제각각인 소비자들을 다루기 어렵다.
+- **풀 모델**: 소비 속도를 소비자가 정한다.
+  * 소비 속도가 느려도 소비자에게 과부하가 걸리지 않으며, 소비자를 늘려 따라잡을 수 있다.
+  * 푸시 모델에서는 브로커가 소비자가 몇 개의 메시지를 처리할 수 있는지 알 수 없으므로, 일괄 처리에는 풀 모델이 더 적합하다.
+  * 반면 풀 모델에서는 소비자가 큰 메시지 묶음을 적극적으로 가져갈 수 있다.
+  * 단점은 지연 시간이 더 길고, 새 메시지가 없을 때도 네트워크 호출이 발생한다는 것이다. 뒤의 문제는 롱 폴링으로 완화할 수 있다.
 
-The state storage stores mapping between partitions and consumers, as well as the last consumed offsets for a partition.
+그래서 대부분의 메시지 큐는(그리고 이번 설계도) 풀 모델을 택한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/state-storage.png" alt="state-storage" width="500" />
+    <img src="./images/consumer-flow.png" alt="소비자 흐름" width="500" />
 </div>
 
-Group 1's offset is at 6, meaning all previous messages are consumed. If a consumer crashes, the new consumer will continue from that message on wards.
+ * 새 소비자가 토픽 A를 구독하고 그룹 1에 참여한다.
+ * 그룹 이름을 해싱해 올바른 브로커 노드를 찾는다. 이렇게 하면 같은 그룹의 모든 소비자가 같은 브로커에 연결된다.
+ * 이 소비자 그룹 코디네이터는 조정 서비스(ZooKeeper)와는 다르다는 점에 유의한다.
+ * 코디네이터는 소비자가 그룹에 참여했음을 확인하고, 그 소비자에게 파티션 2를 할당한다.
+ * 파티션 할당 전략에는 라운드 로빈, 범위(range) 등 여러 가지가 있다.
+ * 소비자는 마지막으로 소비한 오프셋 이후의 메시지를 가져온다. 소비자 오프셋은 상태 저장소에 보관된다.
+ * 소비자는 메시지를 처리하고 오프셋을 브로커에 커밋한다. 이 두 작업의 순서가 메시지 전달 방식을 결정한다.
+
+### **소비자 재조정**
+
+소비자 재조정(consumer rebalancing)은 어떤 소비자가 어떤 파티션을 맡을지 결정하는 과정이다.
+
+이 과정은 소비자가 그룹에 참여하거나 떠날 때, 또는 파티션이 추가되거나 제거될 때 일어난다.
+
+코디네이터 역할을 하는 브로커가 재조정 과정을 조율하는 데 큰 역할을 한다.
+
+<div style="margin-left:3rem">
+    <img src="./images/consumer-rebalancing.png" alt="소비자 재조정" width="500" />
+</div>
+
+ * 같은 그룹의 모든 소비자는 같은 코디네이터에 연결된다. 코디네이터는 그룹 이름을 해싱해 찾는다.
+ * 소비자 목록이 바뀌면 코디네이터는 그룹의 새 리더를 선출한다.
+ * 그룹 리더는 새 파티션 배치 계획을 계산해 코디네이터에 보고하고, 코디네이터는 이를 다른 소비자들에게 알린다.
+
+코디네이터가 그룹 안의 소비자로부터 박동(heartbeat) 신호를 받지 못하면 재조정이 시작된다.
+
+<div style="margin-left:3rem">
+    <img src="./images/consumer-rebalance-example.png" alt="소비자 재조정 예시" width="500" />
+</div>
+
+소비자가 그룹에 참여하면 어떤 일이 일어나는지 살펴보자.
+
+<div style="margin-left:3rem">
+    <img src="./images/consumer-join-group-usecase.png" alt="새 소비자의 그룹 참여" width="500" />
+</div>
+
+ * 처음에는 그룹에 소비자 A만 있으며, A가 모든 파티션을 소비한다.
+ * 소비자 B가 그룹 참여 요청을 보낸다.
+ * 코디네이터는 박동 신호에 대한 응답으로 모든 그룹 구성원에게 재조정할 때라고 수동적으로 알린다.
+ * 모든 소비자가 그룹에 다시 참여하면, 코디네이터는 리더를 선출하고 나머지에게 선출 결과를 알린다.
+ * 리더는 파티션 배치 계획을 만들어 코디네이터에 보낸다. 나머지는 배치 계획을 기다린다.
+ * 소비자들은 새로 할당된 파티션에서 소비를 시작한다.
+
+소비자가 그룹을 떠날 때는 다음과 같다.
+
+<div style="margin-left:3rem">
+    <img src="./images/consumer-leaves-group-usecase.png" alt="소비자의 그룹 탈퇴" width="500" />
+</div>
+
+ * 소비자 A와 B가 같은 그룹에 있다.
+ * 소비자 B가 그룹 탈퇴를 요청한다.
+ * 코디네이터는 A의 박동 신호를 받으면 재조정할 때라고 알린다.
+ * 나머지 단계는 앞과 같다.
+
+소비자가 오랫동안 박동 신호를 보내지 않을 때도 과정은 비슷하다.
+
+<div style="margin-left:3rem">
+    <img src="./images/consumer-no-heartbeat-usecase.png" alt="박동 신호가 없는 소비자" width="500" />
+</div>
+
+### **상태 저장소**
+
+상태 저장소는 파티션과 소비자 사이의 대응 관계, 그리고 파티션별로 마지막으로 소비한 오프셋을 저장한다.
+
+<div style="margin-left:3rem">
+    <img src="./images/state-storage.png" alt="상태 저장소" width="500" />
+</div>
+
+그룹 1의 오프셋은 6이므로, 그 이전 메시지는 모두 소비되었다는 뜻이다. 소비자가 죽으면 새 소비자는 그 메시지부터 이어서 소비한다.
  
-Data access patterns for consumer states:
- * Frequent read/write operations, but low volume
- * Data is updated frequently, but rarely deleted
- * Random read/write
- * Data consistency is important
+소비자 상태 데이터의 접근 패턴:
+ * 읽기/쓰기가 빈번하지만 양은 많지 않다.
+ * 데이터 갱신은 빈번하지만 삭제는 거의 없다.
+ * 읽기/쓰기가 무작위로 일어난다.
+ * 데이터 일관성이 중요하다.
 
-Given these requirements, a fast KV storage like Zookeeper is ideal.
+이런 요구 사항을 고려하면 ZooKeeper 같은 빠른 키-값 저장소가 이상적이다.
 
-### **Metadata storage**
+### **메타데이터 저장소**
 
-The metadata storage stores configuration and topic properties - partition number, retention period, replica distribution.
+메타데이터 저장소는 설정과 토픽 속성(파티션 수, 보관 기간, 사본 배치)을 저장한다.
 
-Metadata doesn't change often and volume is small, but there is a high consistency requirement.
-Zookeeper is a good choice for this storage.
+메타데이터는 자주 바뀌지 않고 양도 적지만, 높은 일관성이 필요하다.
+ZooKeeper가 이 저장소로 적합하다.
 
 ### **ZooKeeper**
 
-Zookeeper is essential for building distributed message queues.
+ZooKeeper는 분산 메시지 큐를 만드는 데 꼭 필요하다.
 
-It is a hierarchical key-value store, commonly used for a distributed configuration, synchronization service and naming registry (ie service discovery).
-
-<div style="margin-left:3rem">
-    <img src="./images/zookeeper.png" alt="zookeeper" width="500" />
-</div>
-
-With this change, the broker only needs to maintain data for the messages. Metadata and state storage is in Zookeeper.
-
-Zookeeper also helps with leader election of the broker replicas.
-
-### **Replication**
-
-In distributed systems, hardware issues are inevitable. We can tackle this via replication to achieve high availability.
+계층적 키-값 저장소로, 분산 설정 관리, 동기화 서비스, 이름 레지스트리(즉, 서비스 탐색)에 흔히 쓰인다.
 
 <div style="margin-left:3rem">
-    <img src="./images/replication-example.png" alt="replication-example" width="500" />
+    <img src="./images/zookeeper.png" alt="ZooKeeper" width="500" />
 </div>
 
- * Each partition is replicated across multiple brokers, but there is only one leader replica.
- * Producers send messages to leader replicas
- * Followers pull the replicated messages from the leader
- * Once enough replicas are synchronized, the leader returns acknowledgment to the producer
- * Distribution of replicas for each partition is called the replica distribution plan.
- * The leader for a given partition creates the replica distribution plan and saves it in Zookeeper
+이렇게 바꾸면 브로커는 메시지 데이터만 유지하면 된다. 메타데이터와 상태 저장소는 ZooKeeper에 있다.
 
-### **In-sync replicas**
+ZooKeeper는 브로커 사본의 리더 선출에도 도움을 준다.
 
-One problem we need to tackle is keeping messages in-sync between the leader and the followers for a given partition.
+### **복제**
 
-In-sync replicas (ISR) are replicas for a partition that stay in-sync with the leader.
-
-The `replica.lag.max.messages` defines how many messages can a replica be lagging behind the leader to be considered in-sync.
+분산 시스템에서 하드웨어 문제는 피할 수 없다. 복제를 통해 이에 대처하고 높은 가용성을 확보한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/in-sync-replicas-example.png" alt="in-sync-replicas-example" width="500" />
+    <img src="./images/replication-example.png" alt="복제 예시" width="500" />
 </div>
 
- * Committed offset is 13
- * Two new messages are written to the leader, but not committed yet.
- * A message is committed once all replicas in the ISR have synchronized that message
- * Replica 2 and 3 have fully caught up with leader, hence, they are in ISR
- * Replica 4 has lagged behind, hence, is removed from ISR for now
+ * 각 파티션은 여러 브로커에 복제되지만, 리더 사본은 하나뿐이다.
+ * 생산자는 리더 사본에 메시지를 보낸다.
+ * 팔로워는 리더로부터 복제할 메시지를 가져간다.
+ * 충분한 수의 사본이 동기화되면 리더는 생산자에게 확인 응답을 보낸다.
+ * 파티션별 사본 배치를 사본 분산 계획(replica distribution plan)이라고 한다.
+ * 파티션의 리더가 사본 분산 계획을 만들어 ZooKeeper에 저장한다.
 
-ISR reflects a trade-off between performance and durability.
- * In order for producers not to lose messages, all replicas should be in sync before sending an acknowledgment
- * But a slow replica will cause the whole partition to become unavailable
+### **동기화된 사본**
 
-Acknowledgment handling is configurable.
+해결해야 할 문제 하나는 파티션의 리더와 팔로워 사이에 메시지를 동기화된 상태로 유지하는 것이다.
 
-`ACK=all` means that all replicas in ISR have to sync a message. Message sending is slow, but message durability is highest.
+동기화된 사본(in-sync replicas, ISR)은 리더와 동기화된 상태를 유지하는 파티션 사본을 말한다.
+
+`replica.lag.max.messages`는 사본이 리더보다 몇 개의 메시지까지 뒤처져도 동기화된 상태로 볼지 정한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/ack-all.png" alt="ack-all" width="500" />
+    <img src="./images/in-sync-replicas-example.png" alt="동기화된 사본 예시" width="500" />
 </div>
 
-`ACK=1` means that producer receives acknowledgment once leader receives the message. Message sending is fast, but message durability is low.
+ * 커밋된 오프셋은 13이다.
+ * 새 메시지 두 개가 리더에 기록되었지만 아직 커밋되지 않았다.
+ * ISR에 속한 모든 사본이 메시지를 동기화하면 그 메시지는 커밋된다.
+ * 사본 2와 3은 리더를 완전히 따라잡았으므로 ISR에 속한다.
+ * 사본 4는 뒤처졌으므로 당분간 ISR에서 제외된다.
+
+ISR은 성능과 영속성 사이의 트레이드오프를 반영한다.
+ * 생산자가 메시지를 잃지 않으려면 확인 응답을 보내기 전에 모든 사본이 동기화되어야 한다.
+ * 하지만 느린 사본 하나 때문에 파티션 전체를 쓸 수 없게 될 수 있다.
+
+확인 응답(ACK) 방식은 설정할 수 있다.
+
+`ACK=all`은 ISR에 속한 모든 사본이 메시지를 동기화해야 한다는 뜻이다. 메시지 전송은 느리지만 영속성은 가장 높다.
 
 <div style="margin-left:3rem">
-    <img src="./images/ack-1.png" alt="ack-1" width="500" />
+    <img src="./images/ack-all.png" alt="ACK=all" width="500" />
 </div>
 
-`ACK=0` means that producer sends messages without waiting for any acknowledgment from leader. Message sending is fastest, message durability is lowest.
+`ACK=1`은 리더가 메시지를 받으면 생산자가 확인 응답을 받는다는 뜻이다. 메시지 전송은 빠르지만 영속성은 낮다.
 
 <div style="margin-left:3rem">
-    <img src="./images/ack-0.png" alt="ack-0" width="500" />
+    <img src="./images/ack-1.png" alt="ACK=1" width="500" />
 </div>
 
-On the consumer side, we can connect all consumers to the leader for a partition and let them read messages from it:
- * This makes for the simplest design and easiest operation
- * Messages in a partition are sent to only one consumer in a group, which limits the connections to the leader replica
- * The number of connections to leader replica is typically not high as long as the topic is not super hot
- * We can scale a hot topic by increasing the number of partitions and consumers
- * In certain scenarios, it might make sense to let a consumer lead from an ISR, eg if they're located in a separate DC
-
-The ISR list is maintained by the leader who tracks the lag between itself and each replica.
-
-### **Scalability**
-
-Let's evaluate how we can scale different parts of the system.
-
-#### Producer
-
-The producer is much smaller than the consumer. Its scalability can easily be achieved by adding/removing new producer instances.
-
-#### Consumer
-
-Consumer groups are isolated from each other. It is easy to add/remove consumer groups at will.
-
-Rebalancing help handle the case when consumers are added/removed from a group gracefully.
-
-Consumer groups are rebalancing help us achieve scalability and fault tolerance.
-
-#### Broker
-
-How do brokers handle failure?
+`ACK=0`은 생산자가 리더의 확인 응답을 기다리지 않고 메시지를 보낸다는 뜻이다. 메시지 전송은 가장 빠르고 영속성은 가장 낮다.
 
 <div style="margin-left:3rem">
-    <img src="./images/broker-failure-recovery.png" alt="broker-failure-recovery" width="500" />
+    <img src="./images/ack-0.png" alt="ACK=0" width="500" />
 </div>
 
- * Once a broker fails, there are still enough replicas to avoid partition data loss
- * A new leader is elected and the broker coordinator redistributes partitions which were at the failed broker to existing replicas
- * Existing replicas pick up the new partitions and act as followers until they're caught up with the leader and become ISR
+소비자 측에서는 모든 소비자를 파티션의 리더에 연결해 리더에서 메시지를 읽게 할 수 있다.
+ * 가장 단순하고 운영하기 쉬운 설계다.
+ * 파티션의 메시지는 그룹 안의 한 소비자에게만 전송되므로 리더 사본에 대한 연결 수가 제한된다.
+ * 토픽이 아주 인기 있지 않은 한, 리더 사본에 대한 연결 수는 보통 많지 않다.
+ * 인기 토픽은 파티션과 소비자 수를 늘려 확장할 수 있다.
+ * 소비자가 다른 데이터 센터에 있는 경우처럼, 상황에 따라 ISR에서 읽게 하는 것이 합리적일 수 있다.
 
-Additional considerations to make the broker fault-tolerant:
- * The minimum number of ISRs balances latency and safety. You can fine-tune it to meet your needs.
- * If all replicas of a partition are in the same node, then it's a waste of resources. Replicas should be across different brokers.
- * If all replicas of a partition crash, then the data is lost forever. Spreading replicas across data centers can help, but it adds up a lot of latency. One option is to use [data mirroring](https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27846330) as a work around.
+ISR 목록은 리더가 관리하며, 리더는 자신과 각 사본 사이의 차이를 추적한다.
 
-How do we handle redistribution of replicas when a new broker is added?
+### **규모 확장성**
+
+시스템의 각 부분을 어떻게 확장할 수 있는지 살펴보자.
+
+#### 생산자
+
+생산자는 소비자보다 훨씬 단순하다. 생산자 인스턴스를 추가하거나 제거해 쉽게 확장할 수 있다.
+
+#### 소비자
+
+소비자 그룹은 서로 독립적이므로 소비자 그룹을 마음대로 추가하거나 제거할 수 있다.
+
+소비자가 그룹에 추가되거나 그룹에서 빠지는 경우는 재조정이 매끄럽게 처리한다.
+
+소비자 그룹과 재조정 덕분에 규모 확장성과 결함 감내를 달성할 수 있다.
+
+#### 브로커
+
+브로커는 장애를 어떻게 처리할까?
 
 <div style="margin-left:3rem">
-    <img src="./images/broker-replica-redistribution.png" alt="broker-replica-redistribution" width="500" />
+    <img src="./images/broker-failure-recovery.png" alt="브로커 장애 복구" width="500" />
 </div>
 
- * We can temporarily allow more replicas than configured, until new broker catches up
- * Once it does, we can remove the partition replica which is no longer needed
+ * 브로커 하나에 장애가 나도 파티션 데이터를 잃지 않을 만큼 사본이 충분히 남아 있다.
+ * 새 리더가 선출되고, 브로커 컨트롤러는 장애 난 브로커에 있던 파티션을 기존 브로커들에 재분배한다.
+ * 기존 브로커는 새 파티션을 받아 팔로워로 동작하며, 리더를 따라잡으면 ISR이 된다.
 
-#### Partition
+브로커의 결함 감내를 높이기 위한 추가 고려 사항:
+ * ISR의 최소 개수는 지연 시간과 안전성 사이에서 균형을 잡는다. 필요에 맞게 조정하면 된다.
+ * 파티션의 사본이 모두 같은 노드에 있으면 자원 낭비다. 사본은 서로 다른 브로커에 두어야 한다.
+ * 파티션의 사본이 모두 죽으면 데이터는 영영 사라진다. 사본을 여러 데이터 센터에 분산하면 도움이 되지만 지연 시간이 크게 늘어난다. 대안으로 [데이터 미러링](https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27846330)을 쓸 수 있다.
 
-Whenever a new partition is added, the producer is notified and consumer rebalancing is triggered.
-
-In terms of data storage, we can only store new messages to the new partition vs. trying to copy all old ones:
+새 브로커가 추가되면 사본 재분배는 어떻게 처리할까?
 
 <div style="margin-left:3rem">
-    <img src="./images/partition-exmaple.png" alt="partition-example" width="500" />
+    <img src="./images/broker-replica-redistribution.png" alt="브로커 사본 재분배" width="500" />
 </div>
 
-Decreasing the number of partitions is more involved:
+ * 새 브로커가 따라잡을 때까지 설정보다 많은 사본을 일시적으로 허용한다.
+ * 새 브로커가 따라잡으면 더 이상 필요 없는 파티션 사본을 제거한다.
+
+#### 파티션
+
+새 파티션이 추가되면 생산자에게 알리고 소비자 재조정을 시작한다.
+
+데이터 저장 측면에서는 기존 메시지를 모두 복사하는 대신, 새 메시지만 새 파티션에 저장하면 된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/partition-decrease.png" alt="partition-decrease" width="500" />
+    <img src="./images/partition-exmaple.png" alt="파티션 추가 예시" width="500" />
 </div>
 
- * Once a partition is decommissioned, new messages are only received by remaining partitions
- * The decommissioned partition isn't removed immediately as messages can still be consumed from it
- * Once a pre-configured retention period passes, do we truncate the data and storage space is freed up
- * During the transitional period, producers only send messages to active partitions, but consumers read from all
- * Once retention period expires, consumers are rebalanced
-
-### **Data delivery semantics**
-
-Let's discuss different delivery semantics.
-
-#### At-most once
-
-With this guarantee, messages are delivered not more than once and could not be delivered at all.
+파티션 수를 줄이는 것은 더 복잡하다.
 
 <div style="margin-left:3rem">
-    <img src="./images/at-most-once.png" alt="at-most-once" width="500" />
+    <img src="./images/partition-decrease.png" alt="파티션 감소" width="500" />
 </div>
 
- * Producer sends a message asynchronously to a topic. If message delivery fails, there is no retry.
- * Consumer fetches message and immediately commits offset. If consumer crashes before processing the message, the message will not be processed.
+ * 파티션이 퇴역(decommission)하면 새 메시지는 남은 파티션들만 받는다.
+ * 퇴역한 파티션의 메시지는 여전히 소비될 수 있으므로 바로 제거하지 않는다.
+ * 미리 정한 보관 기간이 지나야 데이터를 삭제하고 저장 공간을 반환한다.
+ * 전환 기간 동안 생산자는 활성 파티션에만 메시지를 보내지만, 소비자는 모든 파티션에서 읽는다.
+ * 보관 기간이 지나면 소비자를 재조정한다.
 
-#### At-least once
+### **데이터 전달 방식**
 
-A message can be sent more than once and no message should be left unprocessed.
+여러 가지 데이터 전달 방식을 살펴보자.
+
+#### 최대 한 번(at-most once)
+
+이 방식에서는 메시지가 두 번 이상 전달되지 않으며, 아예 전달되지 않을 수도 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/at-least-once.png" alt="at-least-once" width="500" />
+    <img src="./images/at-most-once.png" alt="최대 한 번" width="500" />
 </div>
 
- * Producer sends message with `ack=1` or `ack=all`. If there is any issue, it will keep retrying.
- * Consumer fetches the message and consumes the offset only after it's done processing it.
- * It is possible for a message to be delivered more than once if eg consumer crashes before committing offset but after processing it.
- * This is why, this is good for use-cases where data duplication is acceptable or deduplication is possible.
+ * 생산자는 토픽에 비동기적으로 메시지를 보낸다. 메시지 전달이 실패해도 재시도하지 않는다.
+ * 소비자는 메시지를 가져오자마자 오프셋을 커밋한다. 메시지를 처리하기 전에 소비자가 죽으면 그 메시지는 처리되지 않는다.
 
-#### Exactly once
+#### 최소 한 번(at-least once)
 
-Extremely costly to implement for the system, albeit it's the friendliest guarantee to users:
+메시지가 두 번 이상 전달될 수는 있지만, 처리되지 않고 남는 메시지는 없어야 한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/exactly-once.png" alt="exactly-once" width="500" />
+    <img src="./images/at-least-once.png" alt="최소 한 번" width="500" />
 </div>
 
-### **Advanced features**
+ * 생산자는 `ack=1` 또는 `ack=all`로 메시지를 보낸다. 문제가 생기면 계속 재시도한다.
+ * 소비자는 메시지를 가져와 처리를 마친 뒤에만 오프셋을 커밋한다.
+ * 예를 들어 소비자가 메시지를 처리한 뒤 오프셋을 커밋하기 전에 죽으면, 메시지가 두 번 이상 전달될 수 있다.
+ * 그래서 이 방식은 데이터 중복이 괜찮거나 중복을 제거할 수 있는 용도에 적합하다.
 
-Let's discuss some advanced features, we might discuss in the interview.
+#### 정확히 한 번(exactly once)
 
-#### Message filtering
-
-Some consumers might want to only consume messages of a certain type within a partition.
-
-This can be achieved by building separate topics for each subset of messages, but this can be costly if systems have too many differing use-cases.
- * It is a waste of resources to store the same message on different topics
- * Producer is now tightly coupled to consumers as it changes with each new consumer requirement
-
-We can resolve this using message filtering.
- * A naive approach would be to do the filtering on the consumer-side, but that introduces unnecessary consumer traffic
- * Alternatively, messages can have tags attached to them and consumers can specify which tags they're subscribed to
- * Filtering could also be done via the message payloads but that can be challenging and unsafe for encrypted/serialized messages
- * For more complex mathematical formulaes, the broker could implement a grammar parser or script executor, but that can be heavyweight for the message queue
+사용자에게는 가장 편한 방식이지만, 시스템 입장에서는 구현 비용이 아주 크다.
 
 <div style="margin-left:3rem">
-    <img src="./images/message-filtering.png" alt="message-filtering" width="500" />
+    <img src="./images/exactly-once.png" alt="정확히 한 번" width="500" />
 </div>
 
-#### Delayed messages & scheduled messages
+### **고급 기능**
 
-For some use-cases, we might want to delay or schedule message delivery. 
-For example, we might submit a payment verification check for 30m from now, which triggers the consumer to see if a payment was successful.
+면접에서 논의할 만한 고급 기능을 살펴보자.
 
-This can be achieved by sending messages to temporary storage in the broker and moving the message to the partition at the right time:
+#### 메시지 필터링
+
+어떤 소비자는 파티션 안에서 특정 유형의 메시지만 소비하고 싶을 수 있다.
+
+메시지 부분집합마다 별도 토픽을 만들어 해결할 수 있지만, 용도가 아주 다양한 시스템에서는 비용이 많이 든다.
+ * 같은 메시지를 여러 토픽에 저장하는 것은 자원 낭비다.
+ * 새 소비자 요구 사항이 생길 때마다 생산자를 바꿔야 하므로 생산자와 소비자가 강하게 결합된다.
+
+메시지 필터링으로 이 문제를 해결할 수 있다.
+ * 단순한 방법은 소비자 측에서 필터링하는 것이지만, 불필요한 소비자 트래픽이 생긴다.
+ * 대신 메시지에 태그를 붙이고, 소비자가 구독할 태그를 지정하게 할 수 있다.
+ * 메시지 페이로드로 필터링할 수도 있지만, 암호화되거나 직렬화된 메시지에는 어렵고 안전하지 않다.
+ * 더 복잡한 수식을 쓰려면 브로커에 문법 파서나 스크립트 실행기를 구현할 수 있지만, 메시지 큐에는 너무 무거울 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/delayed-message-implementation.png" alt="delayed-message-implementation" width="500" />
+    <img src="./images/message-filtering.png" alt="메시지 필터링" width="500" />
 </div>
 
- * The temporary storage can be one or more special message topics
- * The timing function can be achieved using dedicated delay queues or a [hierarchical time wheel](http://www.cs.columbia.edu/~nahum/w6998/papers/sosp87-timing-wheels.pdf)
+#### 지연 메시지와 예약 메시지
+
+용도에 따라 메시지 전달을 지연하거나 예약해야 할 수도 있다.
+예를 들어 지금부터 30분 뒤에 결제 확인 작업을 실행하도록 제출해, 소비자가 결제 성공 여부를 확인하게 할 수 있다.
+
+메시지를 브로커의 임시 저장소에 보냈다가, 적절한 시점에 파티션으로 옮기면 된다.
+
+<div style="margin-left:3rem">
+    <img src="./images/delayed-message-implementation.png" alt="지연 메시지 구현" width="500" />
+</div>
+
+ * 임시 저장소는 하나 이상의 특수 메시지 토픽으로 구성할 수 있다.
+ * 타이밍 기능은 전용 지연 큐나 [계층적 타이밍 휠(hierarchical time wheel)](http://www.cs.columbia.edu/~nahum/w6998/papers/sosp87-timing-wheels.pdf)로 구현할 수 있다.
 
 ---
 
-## Step 4: Wrap Up
+## 4단계: 마무리
 
-Additional talking points:
-- **Protocol of communication**: Important considerations - support all use-cases and high data volume, as well as verify message integrity. Popular protocols - AMQP and Kafka protocol.
-- **Retry consumption**: if we can't process a message immediately, we could send it to a dedicated retry topic to be attempted later.
-- **Historical data archive**: old messages can be backed up in high-capacity storages such as HDFS or object storage (eg S3).
+추가로 논의할 만한 주제:
+- **통신 프로토콜**: 모든 용도와 대량의 데이터를 지원하고 메시지 무결성을 검증할 수 있어야 한다. 널리 쓰이는 프로토콜로는 AMQP와 Kafka 프로토콜이 있다.
+- **소비 재시도**: 메시지를 바로 처리할 수 없으면, 나중에 다시 시도하도록 전용 재시도 토픽으로 보낼 수 있다.
+- **이력 데이터 아카이브**: 오래된 메시지는 HDFS나 객체 저장소(예: S3) 같은 대용량 저장소에 백업할 수 있다.
