@@ -1,162 +1,162 @@
-# Chapter 18: Google Maps
+# 18장: 구글 맵 설계
 
-## Introduction
+## 소개
 
-We'll design a simple version of **Google Maps**.
+**구글 맵**의 단순화된 버전을 설계한다.
 
-Some facts about google maps:
- * Started in 2005
- * Provides various services - satellite imagery, street maps, real-time traffic conditions, route planning
- * By 2021, had 1bil daily active users, 99% coverage of the world, 25mil updates daily of real-time location info
-
----
-
-## Step 1: Understand the Problem and Establish Design Scope
-
-Sample Q&A between candidate and interviewer:
- * C: How many daily active users are we dealing with?
- * I: 1bil DAU
- * C: What features should we focus on?
- * I: Location update, navigation, ETA, map rendering
- * C: How large is road data? Do we have access to it?
- * I: We obtained road data from various sources, it's TBs of raw data
- * C: Should we take traffic conditions into consideration?
- * I: Yes, we should for accurate time estimations
- * C: How about different travel modes - by foot, biking, driving?
- * I: We should support those
- * C: How about multi-stop directions?
- * I: Let's not focus on that for scope of interview
- * C: Business places and photos?
- * I: Good question, but no need to consider those
-
-We'll focus on three key features - user location update, navigation service including ETA, map rendering.
-
-### **Non-functional requirements**
-
-- **Accuracy**: user shouldn't get wrong directions
-- **Smooth navigation**: Users should experience smooth map rendering
-- **Data and battery usage**: Client should use as little data and battery as possible. Important for mobile devices.
-- General availability and scalability requirements
-
-### **Map 101**
-
-Before jumping into the design, there are some map-related concepts we should understand.
-
-#### Positioning system
-
-World is a sphere, rotating on its axis. Positiions are defined by latitude (how far north/south you are) and longitude (how far east/west you are):
-
-<div style="margin-left:3rem">
-    <img src="./images/partitioning-system.png" alt="partitioning-system" width="500" />
-</div>
-
-#### Going from 3D to 2D
-
-The process of translating points from 3D to 2D plane is called "map projection".
-
-There are different ways to do it and each comes with its pros and cons. Almost all distort the actual geometry.
-
-<div style="margin-left:3rem">
-    <img src="./images/map-projections.png" alt="map-projections" width="500" />
-</div>
-
-Google maps selected a modified version of Mercator projection called "Web Mercator".
-
-#### Geocoding
-
-Geocoding is the process of converting addresses to geographic coordinates. 
-
-The reverse process is called "reverse geocoding".
-
-One way to achieve this is to use interpolation - leveraging data from different sources (eg GIS-es) where street network is mapped to geo coordinate space.
-
-#### Geohashing
-
-Geohashing is an encoding system which encodes a geographic area into a string of letters and digits.
-
-It depicts the world as a flattened surface and recursively sub-divides it into four quadrants:
-
-<div style="margin-left:3rem">
-    <img src="./images/geohashing.png" alt="geohashing" width="500" />
-</div>
-
-#### Map rendering
-
-Map rendering happens via tiling. Instead of rendering entire map as one big custom image, world is broken up into smaller tiles.
-
-Client only downloads relevant tiles and renders them like stitching together a mosaic.
-
-There are different tiles for different zoom levels. Client chooses appropriate tiles based on the client's zoom level.
-
-Eg, zooming out the entire world would download only a single 256x256 tile, representing the whole world.
-
-#### Road data processing for navigation algorithms
-
-In most routing algorithms, intersections are represented as nodes and roads are represented as edges:
-
-<div style="margin-left:3rem">
-    <img src="./images/road-representation.png" alt="road-representation" width="500" />
-</div>
-
-Most navigation algorithms use a modified version of Djikstra or A* algorithms.
-
-Pathfinding performance is sensitive to the size of the graph. To work at scale, we can't represent the whole world as a graph and run the algorithm on it.
-
-Instead, we use a technique similar to tiling - we subdivide the world into smaller and smaller graphs.
-
-Routing tiles hold references to neighboring tiles and algorithms can stitch together a bigger road graph as it traverses interconnected tiles:
-
-<div style="margin-left:3rem">
-    <img src="./images/routing-tiles.png" alt="routing-tiles" width="500" />
-</div>
-
-This technique enables us to significantly reduce memory bandwidth and only load the tiles we need for the given source/destination pair.
-
-However, for larger routes, stitching together small, detailed routing tiles would still be time/memory consuming. Instead, there are routing tiles with different level of detail and the algorithm uses the appropriately-detailed tiles, based on the destination we're headed for:
-
-<div style="margin-left:3rem">
-    <img src="./images/map-routing-hierarchical.png" alt="map-routing-hierarchical" width="500" />
-</div>
-
-### **Back-of-the-envelope estimation**
-
-For storage, we need to store:
- * map of the world - estimated as ~70pb based on all the tiles we need to store, but factoring in compression of very similar tiles (eg vast desert)
- * metadata - negligible in size, so we can skip it from calculation
- * Road info - stored as routing tiles
-
-Estimated QPS for navigation requests - 1bil DAU at 35min of usage per week -> 5bil minutes per day. 
-Assuming gps update requests are batched, we arrive at 200k QPS and 1mil QPS at peak load
+구글 맵에 관한 몇 가지 사실:
+ * 2005년에 시작했다.
+ * 위성 이미지, 거리 지도, 실시간 교통 상황, 경로 계획 등 다양한 서비스를 제공한다.
+ * 2021년 기준으로 일간 능동 사용자 10억 명, 전 세계 99% 지역 지원, 하루 2,500만 건의 실시간 위치 정보 갱신을 처리했다.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## 1단계: 문제 이해 및 설계 범위 확정
+
+지원자와 면접관 사이의 질의응답 예(지: 지원자, 면: 면접관):
+ * 지: 일간 능동 사용자는 몇 명인가요?
+ * 면: DAU 10억 명입니다.
+ * 지: 어떤 기능에 집중해야 하나요?
+ * 면: 위치 갱신, 경로 안내, 도착 예정 시간(ETA), 지도 표시입니다.
+ * 지: 도로 데이터는 얼마나 큰가요? 접근할 수 있나요?
+ * 면: 여러 곳에서 도로 데이터를 확보했고, 원시 데이터가 수 TB입니다.
+ * 지: 교통 상황도 고려해야 하나요?
+ * 면: 네. 정확한 시간 추정을 위해 고려해야 합니다.
+ * 지: 도보, 자전거, 자동차 같은 다양한 이동 수단은요?
+ * 면: 지원해야 합니다.
+ * 지: 경유지가 여러 곳인 경로 안내는요?
+ * 면: 이번 면접 범위에서는 다루지 않겠습니다.
+ * 지: 사업장 위치와 사진은요?
+ * 면: 좋은 질문이지만 고려하지 않아도 됩니다.
+
+사용자 위치 갱신, ETA를 포함한 경로 안내 서비스, 지도 표시라는 세 가지 핵심 기능에 집중한다.
+
+### **비기능 요구 사항**
+
+- **정확도**: 사용자에게 잘못된 경로를 안내하면 안 된다.
+- **부드러운 경로 안내**: 지도 표시가 매끄러워야 한다.
+- **데이터와 배터리 사용량**: 클라이언트는 데이터와 배터리를 가능한 한 적게 써야 한다. 모바일 단말에서 중요하다.
+- 일반적인 가용성과 규모 확장성 요구 사항
+
+### **지도 101**
+
+설계에 들어가기 전에 알아 둘 지도 관련 개념이 있다.
+
+#### 측위 시스템
+
+지구는 자전축을 중심으로 회전하는 구다. 위치는 위도(얼마나 북쪽/남쪽에 있는지)와 경도(얼마나 동쪽/서쪽에 있는지)로 정의한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design.png" alt="high-level-design" width="500" />
+    <img src="./images/partitioning-system.png" alt="측위 시스템" width="500" />
 </div>
 
-### **Location service**
+#### 3차원 위치의 2차원 변환
+
+3차원 구 위의 점을 2차원 평면에 대응시키는 과정을 '지도 투영법(map projection)'이라고 한다.
+
+방법은 여러 가지이고 각각 장단점이 있다. 거의 모든 방법이 실제 지형을 왜곡한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/location-service.png" alt="location-service" width="500" />
+    <img src="./images/map-projections.png" alt="지도 투영법" width="500" />
 </div>
 
-It is responsible for recording a user's location updates:
- * location updates are sent every `t` seconds
- * location data streams can be used to improve the service over time, eg provide more accurate ETAs, monitor traffic data, detect closed roads, analyze user behavior, etc
+구글 맵은 메르카토르 도법을 조금 변형한 '웹 메르카토르(Web Mercator)' 도법을 택했다.
 
-Instead of sending location updates to the server all the time, we can batch the updates on the client-side and send batches instead:
+#### 지오코딩
+
+지오코딩(geocoding)은 주소를 지리적 좌표로 바꾸는 과정이다.
+
+반대 과정은 '역 지오코딩(reverse geocoding)'이라고 한다.
+
+한 가지 방법은 보간(interpolation)이다. 도로망을 지리 좌표 공간에 대응시켜 둔 여러 출처(예: GIS)의 데이터를 활용한다.
+
+#### 지오해싱
+
+지오해싱(geohashing)은 지리적 영역을 문자와 숫자로 된 문자열로 인코딩하는 방식이다.
+
+지구를 평면으로 펼친 뒤, 재귀적으로 사분면 네 개로 나눈다.
 
 <div style="margin-left:3rem">
-    <img src="./images/location-update-batches.png" alt="location-update-batches" width="500" />
+    <img src="./images/geohashing.png" alt="지오해싱" width="500" />
 </div>
 
-Despite this optimization, for a system of Google Maps scale, load will still be significant. Therefore, we can leverage a database, optimized for heavy writes such as Cassandra.
+#### 지도 표시
 
-We can also leverage Kafka for efficient stream processing of location updates, meant for further analysis.
+지도는 타일(tile) 단위로 표시한다. 지도 전체를 하나의 큰 이미지로 그리는 대신, 세계를 작은 타일로 나눈다.
 
-Example location update request payload:
+클라이언트는 필요한 타일만 내려받아 모자이크처럼 이어 붙여 화면에 그린다.
+
+확대 수준(zoom level)마다 서로 다른 타일이 있다. 클라이언트는 현재 확대 수준에 맞는 타일을 고른다.
+
+예를 들어 세계 전체가 보이도록 축소하면, 세계 전체를 나타내는 256x256 타일 하나만 내려받는다.
+
+#### 경로 안내 알고리즘을 위한 도로 데이터 처리
+
+대부분의 경로 탐색 알고리즘은 교차로를 노드로, 도로를 에지로 표현한다.
+
+<div style="margin-left:3rem">
+    <img src="./images/road-representation.png" alt="도로 표현" width="500" />
+</div>
+
+대부분의 경로 안내 알고리즘은 다익스트라(Dijkstra)나 A* 알고리즘을 변형해 사용한다.
+
+경로 탐색 성능은 그래프 크기에 민감하다. 대규모로 동작하려면 세계 전체를 하나의 그래프로 표현해 알고리즘을 돌릴 수 없다.
+
+대신 타일과 비슷한 기법을 써서 세계를 점점 더 작은 그래프로 나눈다.
+
+경로 안내 타일(routing tile)은 이웃 타일에 대한 참조를 갖고 있으며, 알고리즘은 연결된 타일을 따라가며 더 큰 도로 그래프를 이어 붙일 수 있다.
+
+<div style="margin-left:3rem">
+    <img src="./images/routing-tiles.png" alt="경로 안내 타일" width="500" />
+</div>
+
+이 기법을 쓰면 메모리 대역폭을 크게 줄이고, 주어진 출발지/목적지 쌍에 필요한 타일만 불러올 수 있다.
+
+하지만 경로가 길어지면 작고 상세한 경로 안내 타일을 이어 붙이는 데에도 시간과 메모리가 많이 든다. 그래서 상세 수준이 서로 다른 경로 안내 타일을 두고, 알고리즘은 목적지에 따라 적절한 상세 수준의 타일을 사용한다.
+
+<div style="margin-left:3rem">
+    <img src="./images/map-routing-hierarchical.png" alt="계층적 경로 안내 타일" width="500" />
+</div>
+
+### **개략적인 규모 추정**
+
+저장해야 하는 데이터:
+ * 세계 지도 - 저장해야 할 타일을 모두 고려하면 약 70 PB로 추정되며, 비슷한 타일(예: 넓은 사막)은 압축한다고 가정한다.
+ * 메타데이터 - 크기가 무시할 만하므로 계산에서 뺀다.
+ * 도로 정보 - 경로 안내 타일로 저장한다.
+
+경로 안내 요청 QPS 추정 - DAU 10억 명이 주당 35분씩 사용하면 하루 50억 분이 된다.
+GPS 갱신 요청을 일괄 처리한다고 가정하면 평균 200k QPS, 최대 1mil QPS가 된다.
+
+---
+
+## 2단계: 개략적인 설계안 제시 및 동의 구하기
+
+<div style="margin-left:3rem">
+    <img src="./images/high-level-design.png" alt="개략적인 설계" width="500" />
+</div>
+
+### **위치 서비스**
+
+<div style="margin-left:3rem">
+    <img src="./images/location-service.png" alt="위치 서비스" width="500" />
+</div>
+
+사용자의 위치 변경을 기록하는 역할을 한다.
+ * 위치 변경 내역은 `t`초마다 전송된다.
+ * 위치 데이터 스트림은 서비스를 계속 개선하는 데 쓸 수 있다. 예를 들어 더 정확한 ETA 제공, 교통 데이터 모니터링, 폐쇄 도로 감지, 사용자 행동 분석 등이 있다.
+
+위치 변경 내역을 매번 서버로 보내는 대신, 클라이언트에서 모아 일괄 전송할 수 있다.
+
+<div style="margin-left:3rem">
+    <img src="./images/location-update-batches.png" alt="위치 갱신 일괄 전송" width="500" />
+</div>
+
+이렇게 최적화해도 구글 맵 규모에서는 부하가 여전히 크다. 그래서 Cassandra처럼 쓰기 연산이 많은 부하에 최적화된 데이터베이스를 활용할 수 있다.
+
+추가 분석을 위해 Kafka로 위치 변경 내역을 효율적으로 스트림 처리할 수도 있다.
+
+위치 갱신 요청 페이로드 예:
 
 ```
 POST /v1/locations
@@ -164,17 +164,17 @@ Parameters
   locs: JSON encoded array of (latitude, longitude, timestamp) tuples.
 ```
 
-### **Navigation service**
+### **경로 안내 서비스**
 
-This component is responsible for finding fast routes between A and B in a reasonable time (a little bit of latency is okay). Route need not be the fastest, but accuracy is important.
+A에서 B까지 가는 빠른 경로를 적당한 시간 안에(약간의 지연은 괜찮음) 찾는 컴포넌트다. 경로가 가장 빠를 필요는 없지만 정확도는 중요하다.
 
-Example request payload:
+요청 페이로드 예:
 
 ```
 GET /v1/nav?origin=1355+market+street,SF&destination=Disneyland
 ```
 
-Example response:
+응답 예:
 
 ```json
 {
@@ -202,144 +202,144 @@ Example response:
 }
 ```
 
-Traffic changes and reroutes are not taken into consideration yet, those will be tackled in the deep dive section.
+교통 상황 변화와 경로 재탐색은 아직 고려하지 않았으며, 상세 설계에서 다룬다.
 
-### **Map rendering**
+### **지도 표시**
 
-Holding the entire data set of mapping tiles on the client-side is not feasible as it's petabytes in size.
+지도 타일 데이터는 페타바이트 규모이므로 클라이언트에 전부 보관하는 것은 불가능하다.
 
-They need to be fetched on-demand from the server, based on the client's location and zoom level.
+클라이언트의 위치와 확대 수준에 따라 필요할 때 서버에서 가져와야 한다.
 
-When should new tiles be fetched - while user is zooming in/out and during navigation, while they're going towards a new tile.
+새 타일은 사용자가 확대/축소할 때, 그리고 경로 안내 중 새로운 타일 영역으로 이동할 때 가져와야 한다.
 
-How should the map tiles be served to the client?
- * They can be built dynamically, but that puts a huge load on the server and also makes caching hard
- * Map tiles are served statically, based on their geohash, which a client can calculate. They can be statically stored & served from a CDN
+지도 타일을 클라이언트에 어떻게 제공할까?
+ * 동적으로 만들 수도 있지만, 서버에 큰 부하가 걸리고 캐시하기도 어렵다.
+ * 클라이언트가 계산할 수 있는 지오해시를 기준으로 지도 타일을 정적으로 제공한다. 타일은 미리 만들어 저장해 두고 CDN으로 제공할 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/static-map-tiles.png" alt="static-map-tiles" width="500" />
+    <img src="./images/static-map-tiles.png" alt="정적 지도 타일" width="500" />
 </div>
 
-CDNs enable users to fetch map tiles from point-of-presence servers (POP) which are closest to users in order to minimize latency:
+CDN을 쓰면 사용자는 지연 시간을 최소화하기 위해 가장 가까운 POP(point-of-presence) 서버에서 지도 타일을 가져올 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/cdn-vs-no-cdn.png" alt="cdn-vs-no-cdn" width="500" />
+    <img src="./images/cdn-vs-no-cdn.png" alt="CDN 사용 여부 비교" width="500" />
 </div>
 
-Options to consider for determining map tiles:
- * geohash for map tile can be calculated on the client-side. If that's the case, we should be careful that we commit to this type of map tile calculation for the long-term as forcing clients to update is hard
- * alternatively, we can have simple API which calculates the map tile URLs on behalf of the clients at the cost of additional API call
+지도 타일을 결정하는 방법:
+ * 지도 타일의 지오해시를 클라이언트에서 계산할 수 있다. 이 경우 클라이언트에 강제로 업데이트를 받게 하기는 어려우므로, 이런 방식의 타일 계산을 장기간 유지해야 한다는 점에 유의해야 한다.
+ * 또는 API 호출이 한 번 더 늘어나는 대가를 치르고, 클라이언트 대신 지도 타일 URL을 계산해 주는 간단한 API를 둘 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/map-tile-url-calculation.png" alt="map-tile-url-calculation" width="500" />
+    <img src="./images/map-tile-url-calculation.png" alt="지도 타일 URL 계산" width="500" />
 </div>
 
 ---
 
-## Step 3: Design Deep Dive
+## 3단계: 상세 설계
 
-### **Data model**
+### **데이터 모델**
 
-Let's discuss how we store the different types of data we're dealing with.
+다뤄야 할 여러 유형의 데이터를 어떻게 저장할지 논의한다.
 
-#### Routing tiles
+#### 경로 안내 타일
 
-Initial road data set is obtained from different sources. It is improved over time based on location updates data.
+최초의 도로 데이터는 여러 출처에서 얻는다. 이후 위치 갱신 데이터를 바탕으로 계속 개선된다.
 
-The road data is unstructured. We have a periodic offline processing pipeline, which transforms this raw data into the graph-based routing tiles our app needs.
+도로 데이터는 정형화되어 있지 않다. 주기적으로 실행되는 오프라인 처리 파이프라인이 이 원시 데이터를 앱에 필요한 그래프 기반 경로 안내 타일로 변환한다.
 
-Instead of storing these tiles in a database as we don't need any database features. We can store them in S3 object storage, while caching them agressively.
+데이터베이스 기능이 전혀 필요 없으므로 타일을 데이터베이스에 저장하지 않는다. 대신 S3 같은 객체 저장소에 보관하고 적극적으로 캐시한다.
 
-We can also leverage libraries to compress adjacency lists into binary files efficiently.
+인접 리스트를 이진 파일로 효율적으로 압축해 주는 라이브러리를 활용할 수도 있다.
 
-#### User location data
+#### 사용자 위치 데이터
 
-User location data is very useful for updaring traffic conditions and doing all sorts of other analysis.
+사용자 위치 데이터는 교통 상황을 갱신하고 각종 분석을 하는 데 매우 유용하다.
 
-We can use Cassandra for storing this kind of data as its nature is to be write-heavy.
+이런 데이터는 본질적으로 쓰기 연산이 많으므로 Cassandra에 저장할 수 있다.
 
-Example row:
-
-<div style="margin-left:3rem">
-    <img src="./images/user-location-data-torw.png" alt="user-location-data-row" width="500" />
-</div>
-
-#### Geocoding database
-
-This database stores a key-value pair of lat/long pairs and places.
-
-We can use Redis for its fast read access speed, as we have frequent read and infrequent writes.
-
-#### Precomputed images of the world map
-
-As we discussed, we will precompute map tiling images and store them in CDN.
+행의 예:
 
 <div style="margin-left:3rem">
-    <img src="./images/precomputed-map-tile-image.png" alt="precomputed-map-tile-image" width="500" />
+    <img src="./images/user-location-data-torw.png" alt="사용자 위치 데이터 행" width="500" />
 </div>
 
-### **Services**
+#### 지오코딩 데이터베이스
 
-#### Location service
+위도/경도 쌍과 장소를 키-값 쌍으로 저장한다.
 
-Let's focus on the database design and how user location is stored in detail for this service.
+읽기는 잦고 쓰기는 드물므로, 읽기 속도가 빠른 Redis를 쓸 수 있다.
+
+#### 미리 만들어 둔 세계 지도 이미지
+
+앞에서 말했듯 지도 타일 이미지를 미리 만들어 CDN에 저장한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/location-service-diagram.png" alt="location-service-diagram" width="500" />
+    <img src="./images/precomputed-map-tile-image.png" alt="미리 계산한 지도 타일 이미지" width="500" />
 </div>
 
-We can use a NoSQL database to facilitate the heavy write load we have on location updates. We prioritize availability over consistency as user location data often changes and becomes stale as new updates arrive.
+### **서비스**
 
-We'll choose Cassandra as our database choice as it nicely fits all our requirements.
+#### 위치 서비스
 
-Example row we're going to store:
+이 서비스의 데이터베이스 설계와 사용자 위치를 저장하는 방법을 자세히 살펴본다.
 
 <div style="margin-left:3rem">
-    <img src="./images/user-location-row-example.png" alt="user-location-row-example" width="500" />
+    <img src="./images/location-service-diagram.png" alt="위치 서비스 다이어그램" width="500" />
 </div>
 
- * `user_id` is the partition key in order to quickly access all location updates for a particular user
- * `timestamp` is the clustering key in order to store the data sorted by the time a location update is received
+위치 갱신으로 인한 많은 쓰기 부하를 처리하기 위해 NoSQL 데이터베이스를 쓸 수 있다. 사용자 위치는 자주 바뀌고 새 갱신이 도착하면 이전 데이터는 금방 쓸모없어지므로, 일관성보다 가용성을 우선한다.
 
-We also leverage Kafka to stream location updates to various other service which need the location updates for various purposes:
+모든 요구 사항에 잘 맞는 Cassandra를 데이터베이스로 선택한다.
+
+저장할 행의 예:
 
 <div style="margin-left:3rem">
-    <img src="./images/location-update-streaming.png" alt="location-update-streaming" width="500" />
+    <img src="./images/user-location-row-example.png" alt="사용자 위치 행 예시" width="500" />
 </div>
 
-#### Rendering map
+ * `user_id`는 파티션 키로, 특정 사용자의 위치 갱신 내역 전체에 빠르게 접근하기 위한 것이다.
+ * `timestamp`는 클러스터링 키로, 위치 갱신을 받은 시각순으로 데이터를 정렬해 저장하기 위한 것이다.
 
-Map tiles are stored at various zoom levels. At the lowest zoom level, the entire world is represented by a single 256x256 tile.
-
-As zoom levels increase, the number of map tiles quadruples:
+또한 위치 갱신 내역이 필요한 여러 서비스에 Kafka로 위치 갱신 내역을 스트리밍한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/zoom-level-increases.png" alt="zoom-level-increases" width="500" />
+    <img src="./images/location-update-streaming.png" alt="위치 갱신 스트리밍" width="500" />
 </div>
 
-One optimization we can use is to not send the entire image information over the network, but instead represent tiles as vectors (paths & polygons) and let the client render the tiles dynamically.
+#### 지도 표시
 
-This will have substantial bandwidth savings.
+지도 타일은 여러 확대 수준별로 저장된다. 가장 낮은 확대 수준에서는 세계 전체를 256x256 타일 하나로 표현한다.
 
-#### Navigation service
-
-This service is responsible for finding the fastest routes:
+확대 수준이 한 단계 올라갈 때마다 지도 타일 수는 네 배가 된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/navigation-service.png" alt="navigation-service" width="500" />
+    <img src="./images/zoom-level-increases.png" alt="확대 수준 증가" width="500" />
 </div>
 
-Let's go through each component in this sub-system.
+한 가지 최적화는 이미지 정보를 통째로 네트워크로 보내지 않고, 타일을 벡터(경로와 다각형)로 표현해 클라이언트가 동적으로 그리게 하는 것이다.
 
-First, we have the geocoding service which resolves an address to a location of lat/long pair.
+이렇게 하면 대역폭을 크게 절약할 수 있다.
 
-Example request:
+#### 경로 안내 서비스
+
+가장 빠른 경로를 찾는 서비스다.
+
+<div style="margin-left:3rem">
+    <img src="./images/navigation-service.png" alt="경로 안내 서비스" width="500" />
+</div>
+
+이 하위 시스템의 각 컴포넌트를 살펴보자.
+
+먼저 지오코딩 서비스는 주소를 위도/경도 쌍으로 변환한다.
+
+요청 예:
 
 ```
 https://maps.googleapis.com/maps/api/geocode/json?address=1600+Amphitheatre+Parkway,+Mountain+View,+CA
 ```
 
-Example response:
+응답 예:
 
 ```json
 {
@@ -375,29 +375,29 @@ Example response:
 }
 ```
 
-The route planner service computes a suggested route, optimized for travel time according to current traffic conditions.
+경로 계획(route planner) 서비스는 현재 교통 상황을 반영해 이동 시간 측면에서 최적화된 경로를 계산해 제안한다.
 
-The shortest-path service runs a variation of the A* algorithm against the routing tiles in object storage to compute an optimal path:
- * It receives the source/destination pairs, converts them to lat/long pairs and derives the geohashes from those pairs to derive the routing tiles
- * The algorithm starts from the initial routing tile and starts traversing it until a good enough path is found to the destination tile
+최단 경로(shortest-path) 서비스는 객체 저장소에 있는 경로 안내 타일을 대상으로 A* 알고리즘의 변형을 실행해 최적 경로를 계산한다.
+ * 출발지/목적지 쌍을 받아 위도/경도 쌍으로 바꾸고, 그로부터 지오해시를 계산해 경로 안내 타일을 알아낸다.
+ * 알고리즘은 출발지 경로 안내 타일에서 시작해, 목적지 타일까지 충분히 좋은 경로를 찾을 때까지 그래프를 탐색한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/shortest-path-service.png" alt="shortest-path-service" width="500" />
+    <img src="./images/shortest-path-service.png" alt="최단 경로 서비스" width="500" />
 </div>
 
-The ETA service is called by the route planner to get estimated time based on machine learning algorithms, predicting ETA based on traffic data.
+ETA 서비스는 경로 계획 서비스가 호출하며, 교통 데이터를 바탕으로 머신러닝 알고리즘으로 예상 도착 시간을 계산한다.
 
-The ranker service is responsible to rank different possible paths based on filters, passed by the user, ie flags to avoid toll roads or freeways.
+순위 결정(ranker) 서비스는 사용자가 지정한 필터(예: 유료 도로나 고속도로 회피)에 따라 가능한 경로들의 순위를 매긴다.
 
-The updater service asynchronously update some of the important databases to keep them up-to-date.
+갱신(updater) 서비스는 주요 데이터베이스를 비동기적으로 갱신해 최신 상태로 유지한다.
 
-#### Improvement - adaptive ETA and rerouting
+#### 개선: 적응형 ETA와 경로 재탐색
 
-One improvement we can do is to adaptively update in-flight routes based on newly available traffic data.
+새로 들어온 교통 데이터를 바탕으로 안내 중인 경로를 적응적으로 갱신하도록 개선할 수 있다.
 
-One way to implement this is to store users who are currently navigating through a route in the database by storing all the tiles they're supposed to go through.
+한 가지 구현 방법은 현재 경로 안내를 받고 있는 사용자와, 그 사용자가 지나갈 타일 전체를 데이터베이스에 저장하는 것이다.
 
-Data might look like this:
+데이터는 다음과 같은 모습이 된다.
 
 ```
 user_1: r_1, r_2, r_3, …, r_k
@@ -407,37 +407,37 @@ user_3: r_2, r_8, r_9, …, r_m
 user_n: r_2, r_10, r21, ..., r_l
 ```
 
-If a traffic accident happens on some tile, we can identify all users whose path goes through that tile and re-route them.
+어떤 타일에서 교통사고가 나면, 그 타일을 지나는 경로의 사용자를 모두 찾아 경로를 다시 안내할 수 있다.
 
-To reduce the amount of tiles we store in the database, we can instead store the origin routing tile and several routing tiles in different resolution levels until the destination tile is also included:
+데이터베이스에 저장하는 타일 수를 줄이려면, 출발지 경로 안내 타일과 함께 목적지 타일이 포함될 때까지 해상도 수준을 높여 가며 상위 경로 안내 타일 몇 개만 저장하면 된다.
 
 ```
 user_1, r_1, super(r_1), super(super(r_1)), ...
 ```
 
 <div style="margin-left:3rem">
-    <img src="./images/adaptive-eta-data-storage.png" alt="adaptive-eta-data-storage" width="500" />
+    <img src="./images/adaptive-eta-data-storage.png" alt="적응형 ETA 데이터 저장" width="500" />
 </div>
 
-Using this, we only need to check if the final tile of a user includes the traffic accident tile to see if user is impacted.
+이렇게 하면 사용자의 마지막 타일이 교통사고 타일을 포함하는지만 확인해 그 사용자가 영향을 받는지 알 수 있다.
 
-We can also keep track of all possible routes for a navigating user and notify them if a faster re-route is available.
+경로 안내 중인 사용자의 가능한 경로를 모두 추적해 두었다가, 더 빠른 경로가 생기면 알려 줄 수도 있다.
 
-#### Delivery protocols
+#### 전송 프로토콜
 
-We have several options, which enable us to proactively push data to clients from the server:
- * Mobile push notifications don't work because payload is limited and it's not available for web apps
- * WebSocket is generally a better option than long-polling as it has less compute footprint on servers
- * We can also use server-sent events (SSE) but lean towards web sockets as they support bi-directional communication which can come in handy for eg a last-mile delivery feature
+서버가 클라이언트에 능동적으로 데이터를 보낼 수 있게 해 주는 몇 가지 선택지가 있다.
+ * 모바일 푸시 알림은 페이로드 크기가 제한되고 웹 앱에서는 쓸 수 없어 적합하지 않다.
+ * 웹소켓은 서버의 컴퓨팅 자원을 덜 쓰므로 일반적으로 롱 폴링보다 낫다.
+ * 서버 전송 이벤트(SSE)도 쓸 수 있지만, 양방향 통신을 지원하는 웹소켓이 더 낫다. 양방향 통신은 예를 들어 '라스트 마일' 배송 같은 기능에 유용하다.
 
 ---
 
-## Step 4: Wrap Up
+## 4단계: 마무리
 
-This is our final design:
+최종 설계는 다음과 같다.
 
 <div style="margin-left:3rem">
-    <img src="./images/final-design.png" alt="final-design" width="500" />
+    <img src="./images/final-design.png" alt="최종 설계" width="500" />
 </div>
 
-One additional feature we could provide is multi-stop navigation which can be sold to enterprise customers such as Uber or Lyft in order to determine optimal path for visiting a set of locations.
+추가로 제공할 수 있는 기능으로는 경유지가 여러 곳인 경로 안내가 있다. 여러 장소를 방문하는 최적 경로를 정하는 기능으로, 우버나 리프트 같은 기업 고객에게 판매할 수 있다.
