@@ -1,1 +1,0 @@
-# system-design-notes-ko
