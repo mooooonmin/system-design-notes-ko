@@ -1,182 +1,182 @@
-# Chapter 13: Design a Search Autocomplete System
+# 13장: 검색어 자동완성 시스템 설계
 
-## Introduction
-Autocomplete, also known as typeahead or incremental search, provides real-time suggestions to users as they type in search boxes. The system must efficiently deliver top-k relevant and popular suggestions based on historical query data.
+## 소개
+자동완성(autocomplete)은 타입어헤드(typeahead), 점진 검색(incremental search)이라고도 하며, 사용자가 검색창에 입력하는 동안 실시간으로 추천 검색어를 보여 준다. 시스템은 과거 질의 데이터를 바탕으로 관련성 높고 인기 있는 상위 k개 검색어를 효율적으로 제공해야 한다.
 
-### Key Features
-- Suggest up to **5 autocomplete results**.
-- Based on **query popularity** (frequency).
-- Support only **lowercase English characters**.
-- Fast response time (<100 ms) and scalable.
-
----
-
-## Step 1: Understanding the Problem
-
-### Requirements
-1. **Real-Time Suggestions:** Display relevant matches as the user types.
-2. **Top-k Results:** Return up to 5 results sorted by popularity.
-3. **Scalability:** Handle **10 million DAU** with a peak QPS of **48,000**.
-4. **High Availability:** Handle failures without system downtime.
-5. **Data Growth:** Support daily storage growth of **0.4 GB** for new query data.
+### 핵심 기능
+- 자동완성 검색어를 **최대 5개**까지 제시한다.
+- **질의 인기도**(빈도)를 기준으로 한다.
+- **영어 소문자만** 지원한다.
+- 응답 속도가 빠르고(100 ms 미만) 규모 확장이 가능해야 한다.
 
 ---
 
-## Step 2: High-Level Design
-At the high-level, the system is broken down into two services:
-1. **Data Gathering Service:** 
-    - Collects user queries and aggregates them for frequency analysis in real-time.
-    - Real-time processing is not practical for large data sets; however, it is a good starting point
+## 1단계: 문제 이해
 
-
-2. **Query Service:** Provides the top-k suggestions based on the user’s input.
+### 요구 사항
+1. **실시간 추천:** 사용자가 입력하는 동안 관련 검색어를 보여 준다.
+2. **상위 k개 결과:** 인기순으로 정렬된 검색어를 최대 5개 반환한다.
+3. **규모 확장성:** **DAU 1,000만 명**, 최대 QPS **48,000**을 처리한다.
+4. **고가용성:** 장애가 나도 시스템이 중단되지 않는다.
+5. **데이터 증가:** 새 질의 데이터로 매일 **0.4 GB**씩 늘어나는 저장 공간을 감당한다.
 
 ---
 
-### Data Gathering Service
+## 2단계: 개략적인 설계
+개략적으로 보면 시스템은 두 서비스로 나뉜다.
+1. **데이터 수집 서비스(data gathering service):** 
+    - 사용자 질의를 수집해 실시간으로 빈도를 집계한다.
+    - 데이터가 많으면 실시간 처리는 현실적이지 않지만, 출발점으로는 괜찮다.
+
+
+2. **질의 서비스(query service):** 사용자 입력에 맞는 상위 k개 검색어를 제공한다.
+
+---
+
+### 데이터 수집 서비스
 <div style="margin-left:3rem">
-    <img src="./images/data-gathering.png" alt="Data Gathering" width="600">
+    <img src="./images/data-gathering.png" alt="데이터 수집" width="600">
 </div>
 
-- Aggregates query data from analytics logs and updates the frequency table.
-- Processes historical data weekly to build a **trie** (prefix tree).
+- 분석 로그에서 질의 데이터를 집계해 빈도 테이블을 갱신한다.
+- 과거 데이터를 매주 처리해 **트라이(trie)**(접두어 트리)를 만든다.
 
 
 
 
-### Query Service
+### 질의 서비스
 <div style="margin-left:3rem">
-    <img src="./images/frequency-table.png" alt="Frequency Table" width="400">
-    <img src="./images/basic-search-suggestions.png" alt="Search Suggestions" width="360">
+    <img src="./images/frequency-table.png" alt="빈도 테이블" width="400">
+    <img src="./images/basic-search-suggestions.png" alt="추천 검색어" width="360">
 </div>
 
-- Uses the frequency table from data gathering service.
-- Processes user input and retrieves top-k suggestions from the frequency table using a Trie.
-- Optimized for fast lookups using caching and efficient data structures.
-- For example when a user types “tw” in the search box, the following top 5 searched queries are displayed.
+- 데이터 수집 서비스가 만든 빈도 테이블을 사용한다.
+- 사용자 입력을 받아 트라이를 이용해 빈도 테이블에서 상위 k개 검색어를 찾는다.
+- 캐시와 효율적인 자료 구조로 빠른 조회에 최적화한다.
+- 예를 들어 사용자가 검색창에 "tw"를 입력하면, 다음과 같이 가장 많이 검색된 질의 5개가 표시된다.
 
 
 ---
 
-## Step 3: Design Deep Dive
+## 3단계: 상세 설계
 
-### Trie Data Structure
-The **trie** is a tree-like data structure used to store and retrieve query strings efficiently.
+### 트라이 자료 구조
+**트라이**는 질의 문자열을 효율적으로 저장하고 찾기 위한 트리 형태의 자료 구조다.
 
-#### Key Features
-1. **Compact Storage:** Represents prefixes hierarchically to minimize redundancy.
-2. **Frequency Information:** Stores the popularity of queries at each node.
+#### 핵심 특징
+1. **압축 저장:** 접두어를 계층적으로 표현해 중복을 줄인다.
+2. **빈도 정보:** 각 노드에 질의의 인기도를 저장한다.
 
-4. **Steps to get top k most searched queries**
+4. **가장 많이 검색된 질의 k개를 찾는 단계**
    <div style="margin-left:3rem">
-      <img src="./images/trie-structure.png" alt="Trie Structure" width="500">
+      <img src="./images/trie-structure.png" alt="트라이 구조" width="500">
    </div>
 
-    - Find the prefix
-    - Traverse the subtree from prefix node to get all valid children
-    - Sort the children and get top k 
+    - 해당 접두어를 표현하는 노드를 찾는다.
+    - 접두어 노드부터 하위 트리를 탐색해 유효한 자식 노드를 모두 찾는다.
+    - 자식 노드를 정렬해 상위 k개를 고른다.
 
 
-3. **Optimizations:**
-   - Cache top-k queries at each node to speed up retrieval and avoid traversing the whole trie.
+3. **최적화:**
+   - 각 노드에 상위 k개 질의를 캐시해 두면 트라이 전체를 탐색하지 않고 빠르게 찾을 수 있다.
 
-        <img src="./images/cached-trie.png" alt="Cached Trie" width="600">
+        <img src="./images/cached-trie.png" alt="캐시된 트라이" width="600">
 
-   - Limit prefix length to reduce search space as users rarely type a loong search query (say 50).
+   - 사용자가 아주 긴 검색어를 입력하는 일은 드물므로, 접두어 최대 길이(예: 50)를 제한해 탐색 범위를 줄인다.
 
-#### Trie Operations
-1. **Create:** 
-    - Built weekly using aggregated query data.
-    - The source of data is from Analytics Log/DB.
-2. **Update:** Rarely updated in real-time; weekly updates replace old data.
-3. **Delete:** 
+#### 트라이 연산
+1. **생성:** 
+    - 집계된 질의 데이터로 매주 만든다.
+    - 데이터 출처는 분석 로그나 데이터베이스다.
+2. **갱신:** 실시간으로 갱신하는 일은 드물며, 매주 새 트라이로 기존 데이터를 대체한다.
+3. **삭제:** 
       <div style="margin-left:3rem">
-         <img src="./images/delete-kv.png" alt="Delete KV" width="500">
+         <img src="./images/delete-kv.png" alt="키-값 삭제" width="500">
       </div>
 
-    - Filters remove unwanted or harmful suggestions (e.g., hate speech).
-    - Having a filter layer gives us the flexibility of removing results based on different filter rules.
-    - Unwanted suggestions are removed physically from the database asynchronically.
+    - 필터로 원치 않거나 유해한 검색어(예: 혐오 발언)를 제거한다.
+    - 필터 계층을 두면 다양한 필터 규칙에 따라 결과를 유연하게 제거할 수 있다.
+    - 원치 않는 검색어는 데이터베이스에서 비동기적으로 물리 삭제한다.
     
 
 ---
 
-### Query Processing Flow
-1. **Prefix Search:**
-   - Identify the prefix node corresponding to the user’s input.
-   - Traverse the subtree to collect valid suggestions.
-2. **Top-k Sorting:**
-   - Cache top-k suggestions at each node to minimize sorting overhead.
-3. **Response Construction:**
-   - Construct results using cached data for fast response times.
+### 질의 처리 흐름
+1. **접두어 검색:**
+   - 사용자 입력에 해당하는 접두어 노드를 찾는다.
+   - 하위 트리를 탐색해 유효한 검색어를 모은다.
+2. **상위 k개 정렬:**
+   - 각 노드에 상위 k개 검색어를 캐시해 정렬 부담을 최소화한다.
+3. **응답 구성:**
+   - 캐시된 데이터로 결과를 구성해 응답 시간을 줄인다.
 
 ---
 
-### Optimizations
-1. **Cache at Each Node:**
-   - Store the top-k queries to avoid redundant traversals.
-2. **Limit Prefix Length:**
-   - Cap prefix length to a small value (e.g., 50 characters) for faster lookups.
-3. **AJAX Requests:**
-   - Use lightweight asynchronous requests for real-time responses.
-4. **Browser Caching:**
-   - Save autocomplete results in the browser cache for frequently searched terms.
+### 최적화
+1. **노드마다 캐시:**
+   - 상위 k개 질의를 저장해 중복 탐색을 피한다.
+2. **접두어 길이 제한:**
+   - 접두어 최대 길이를 작은 값(예: 50자)으로 제한해 조회 속도를 높인다.
+3. **AJAX 요청:**
+   - 가벼운 비동기 요청으로 실시간 응답을 제공한다.
+4. **브라우저 캐시:**
+   - 자주 검색되는 검색어의 자동완성 결과를 브라우저 캐시에 저장한다.
 
 ---
 
-### Data Gathering Pipeline
-In the high-level design, whenever a user types a search query, data is updated in real-time. This appraoch is not practical.
-- Users may enter billions of queries per day. Updating the trie on every query is not feasible.
-- Top suggestions may not change much one the trie is built.
+### 데이터 수집 파이프라인
+개략적인 설계에서는 사용자가 검색어를 입력할 때마다 데이터를 실시간으로 갱신했다. 이 방법은 현실적이지 않다.
+- 사용자는 하루에 수십억 개의 질의를 입력할 수 있다. 질의마다 트라이를 갱신하는 것은 불가능하다.
+- 트라이가 한번 만들어지면 상위 검색어는 크게 바뀌지 않을 것이다.
 
 
-#### Updated Design
+#### 수정된 설계
 
 <div style="margin-left:3rem">
-   <img src="./images/data-gathering-flow.png" alt="Updated Data Gathering Flow" width="600">
+   <img src="./images/data-gathering-flow.png" alt="수정된 데이터 수집 흐름" width="600">
 </div>
 
-1. **Analytics Logs:**
-   - Stores raw query data as logs for weekly aggregation.
-   - Logs are append-only and are not indexed
-2. **Aggregators:**
-   - Process logs into frequency tables, suitable for trie construction.
-   - For real-time applications such as Twitter, aggregate data in a shorter time interval.
-   - For other cases, aggregating data less frequently, say once per week is good enough.
-3. **Workers:**
-   - Asynchronous servers rebuild the trie and store it in persistent storage.
-4. **Storage Options:**
-    - **Trie Cache**: Trie Cache is a distributed cache system that keeps trie in memory for fast read.
-    - **Trie DB** 
-        1. **Document Store (e.g., MongoDB)**: Since a new trie is built weekly, we can periodically take a snapshot of it, serialize it, and store the serialized data in the database like MongoDB
-        2. **Key-Value Store:** 
-            - Maps prefixes to node data for fast access.
-            - Every prefix in the trie is mapped to a key in a hash table.
-            - Data on each trie node is mapped to a value in a hash table.
+1. **데이터 분석 서비스 로그:**
+   - 매주 집계할 수 있도록 원시 질의 데이터를 로그로 저장한다.
+   - 로그는 추가만 가능하며(append-only) 인덱스를 걸지 않는다.
+2. **로그 취합 서버(aggregator):**
+   - 로그를 트라이 생성에 적합한 빈도 테이블로 가공한다.
+   - 트위터처럼 실시간성이 중요한 애플리케이션이라면 짧은 주기로 데이터를 취합한다.
+   - 그 밖의 경우에는 덜 자주, 예를 들어 일주일에 한 번 취합해도 충분하다.
+3. **작업 서버(worker):**
+   - 비동기적으로 트라이를 다시 만들고 영구 저장소에 저장하는 서버들이다.
+4. **저장 방법:**
+    - **트라이 캐시**: 트라이를 메모리에 유지해 읽기 연산 성능을 높이는 분산 캐시 시스템이다.
+    - **트라이 데이터베이스** 
+        1. **문서 저장소(예: MongoDB)**: 매주 새 트라이를 만들므로, 주기적으로 트라이의 스냅숏을 떠서 직렬화한 뒤 MongoDB 같은 데이터베이스에 저장할 수 있다.
+        2. **키-값 저장소:** 
+            - 접두어를 노드 데이터에 대응시켜 빠르게 접근할 수 있게 한다.
+            - 트라이의 모든 접두어를 해시 테이블의 키로 변환한다.
+            - 각 트라이 노드에 보관된 데이터를 해시 테이블의 값으로 변환한다.
 
-                <img src="./images/trie-db.png" alt="Trie DB" width="600">
+                <img src="./images/trie-db.png" alt="트라이 데이터베이스" width="600">
 ---
 
-### Scalability
-1. **Sharding:**
-   - Distribute trie nodes across servers based on prefix ranges (e.g., `a-m`, `n-z`).
-   - Further shard within prefixes to balance uneven distributions (e.g., `aa-ag`, `ah-an`).
-2. **Load Balancing:**
+### 규모 확장성
+1. **샤딩:**
+   - 접두어 범위(예: `a-m`, `n-z`)를 기준으로 트라이 노드를 여러 서버에 분산한다.
+   - 분포가 고르지 않으면 접두어를 더 잘게 나눠 샤딩한다(예: `aa-ag`, `ah-an`).
+2. **로드밸런싱:**
    <div style="margin-left:3rem">
-      <img src="./images/sharding.png" alt="Sharding" width="400">
+      <img src="./images/sharding.png" alt="샤딩" width="400">
    </div>
 
-   - Use a shard map manager to route requests to the appropriate server.
+   - 샤드 맵 관리자(shard map manager)를 두어 요청을 알맞은 서버로 보낸다.
 
 
 ---
 
-## Step 4: Advanced Features
+## 4단계: 고급 기능
 
-### Multi-Language Support
-1. **Unicode Characters:** Use Unicode to support non-English languages.
-2. **Country-Specific Tries:** Build separate tries for different countries or regions.
+### 다국어 지원
+1. **유니코드 문자:** 영어 이외의 언어를 지원하기 위해 유니코드를 사용한다.
+2. **국가별 트라이:** 국가나 지역별로 별도의 트라이를 만든다.
 
-### Trending Queries
-- Handle real-time events by dynamically updating trie nodes or weighting recent queries more heavily.
+### 실시간으로 변하는 검색어 추이
+- 트라이 노드를 동적으로 갱신하거나 최근 질의에 더 큰 가중치를 주어 실시간 이벤트에 대응한다.
 
