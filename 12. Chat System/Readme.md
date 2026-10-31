@@ -1,204 +1,197 @@
-# Chapter 12: Design a Chat System
+# 12장: 채팅 시스템 설계
 
-## Introduction
-A **chat system** supports real-time messaging between users. This chapter focuses on designing a chat app that includes:
-- **One-on-One Chat**
-- **Group Chat (max 100 users)**
-- **Online Presence Indicators**
-- **Multiple Device Support**
-- **Push Notifications**
+## 소개
+**채팅 시스템(chat system)** 은 사용자 간 실시간 메시지 교환을 지원한다. 이 장에서는 다음 기능을 갖춘 채팅 앱을 설계하는 데 집중한다.
+- **1:1 채팅**
+- **그룹 채팅(최대 100명)**
+- **접속 상태 표시**
+- **다중 단말 지원**
+- **푸시 알림**
 
-The system targets **50 million daily active users (DAU)** and stores chat history permanently.
-
----
-
-## Step 1: Understanding the Problem
-
-### Requirements
-1. **Features:**
-   - One-on-one and group chat (max 100 members).
-   - Text-based messages (up to 100,000 characters).
-   - Online/offline indicators.
-   - Support for multiple devices.
-   - Push notifications.
-2. **Scale:** Design for 50 million DAU.
-3. **Storage:** Permanent chat history.
+시스템은 **일간 능동 사용자(DAU) 5,000만 명**을 대상으로 하며, 채팅 이력을 영구 보관한다.
 
 ---
 
-## Step 2: High-Level Design
+## 1단계: 문제 이해
 
-### Communication Protocols
-1. **Sender Side:** HTTP for sending messages, leveraging persistent connections for efficiency.
+### 요구 사항
+1. **기능:**
+   - 1:1 채팅과 그룹 채팅(최대 100명)
+   - 텍스트 메시지(최대 100,000자)
+   - 온라인/오프라인 상태 표시
+   - 다중 단말 지원
+   - 푸시 알림
+2. **규모:** DAU 5,000만 명을 기준으로 설계한다.
+3. **저장:** 채팅 이력을 영구 보관한다.
+
+---
+
+## 2단계: 개략적인 설계
+
+### 통신 프로토콜
+1. **송신 측:** 메시지를 보낼 때는 HTTP를 사용하며, 효율을 위해 지속 연결(keep-alive)을 활용한다.
 
       <div style="margin-left:2rem">
-      <img src="./images/basic-design.png" alt="Basic Design" width="500">    
-      <div>
+      <img src="./images/basic-design.png" alt="기본 설계" width="500">    
+      </div>
 
-2. **Receiver Side:**
-   - **Polling:**
-      - Client periodically asks the server if there are messages available.
-      - Inefficient due to frequent, redundant requests.
+2. **수신 측:**
+   - **폴링(polling):**
+      - 클라이언트가 주기적으로 서버에 새 메시지가 있는지 묻는다.
+      - 불필요한 요청이 자주 발생해 비효율적이다.
 
-         <img src="./images/polling.png" alt="Polling" width="400">    
+         <img src="./images/polling.png" alt="폴링" width="400">    
 
-   - **Long Polling:** 
-      - Keeps the connection open until messages arrive. 
-      - Inefficient for inactive users.
+   - **롱 폴링(long polling):** 
+      - 새 메시지가 도착할 때까지 연결을 열어 둔다.
+      - 활동이 적은 사용자에게는 비효율적이다.
 
-         <img src="./images/long-polling.png" alt="Long Polling" width="400">
+         <img src="./images/long-polling.png" alt="롱 폴링" width="400">
 
-   - **WebSocket:** 
-      - A bi-directional, persistent connection for real-time communication, chosen for both sending and receiving messages.
-      - Uses WebSockets (ws) protocol for sending and recieving messages.
+   - **웹소켓(WebSocket):** 
+      - 실시간 통신을 위한 양방향 지속 연결로, 메시지 송신과 수신 모두에 쓰기로 한다.
+      - 메시지를 주고받을 때 웹소켓(ws) 프로토콜을 사용한다.
 
-         <img src="./images/websocket.png" alt="Websocket"  width="400" >    
+         <img src="./images/websocket.png" alt="웹소켓"  width="400" >    
    
 ---
 
-### Components
+### 구성 요소
 
 <div style="margin-left:5rem">
-   <img src="./images/high-level-stateless-arch.png" alt="High Level Architecture" height="350">    
-   <img src="./images/high-level-statefull-arch.png" alt="High Level Architecture" height="350" width="550">
+   <img src="./images/high-level-stateless-arch.png" alt="개략적인 아키텍처(무상태)" height="350">    
+   <img src="./images/high-level-statefull-arch.png" alt="개략적인 아키텍처(상태 유지)" height="350" width="550">
 </div>
 
-1. **Stateless Services:**
-   - Handle signup, login, and user profile management.
-   - Integrated with service discovery to recommend the best chat server.
-2. **Stateful Services:**
-   - Chat servers maintain persistent WebSocket connections.
-   - Responsible for message delivery and synchronization.
-3. **Third-Party Integration:**
-   - Push notification services notify users about new messages.
-   - Refer Notification System chapter for notifications implementation.
+1. **무상태 서비스:**
+   - 회원 가입, 로그인, 사용자 프로필 관리를 처리한다.
+   - 서비스 탐색(service discovery)과 연동해 클라이언트에 가장 적합한 채팅 서버를 추천한다.
+2. **상태 유지 서비스:**
+   - 채팅 서버는 웹소켓 지속 연결을 유지한다.
+   - 메시지 전달과 동기화를 책임진다.
+3. **제3자 서비스 연동:**
+   - 푸시 알림 서비스로 새 메시지가 왔음을 사용자에게 알린다.
+   - 알림 구현은 10장 알림 시스템을 참고한다.
 
 
 ---
-### Design
+### 설계
 
-The client maintains a persistent WebSocket connection to a chat server for real-time messaging.
+클라이언트는 실시간 메시지 교환을 위해 채팅 서버와 웹소켓 지속 연결을 유지한다.
 
 <div style="margin-left:3rem">
-      <img src="./images/high-level-design.png" alt="High Level Design" width="450"> 
+      <img src="./images/high-level-design.png" alt="개략적인 설계" width="450"> 
 </div>
 
-- Chat servers facilitate message sending/receiving.
-- Presence servers manage online/offline status.
-- API servers handle everything including user login, signup, change profile, etc.
-- Notification servers send push notifications.
-- Finally, the key-value store is used to store chat history.Key-value stores for the database of the chat history data for following reasons:
-   - It allows easy horizontal scaling.
-   - KV stores provide very low latency to access data.
-   - Relational databases do not handle long tail of data well. When the indexes grow
-   large, random access is expensive.
-   - KV stores are adopted by other proven reliable chat applications. For example,
-   both Facebook messenger and Discord.
+- 채팅 서버는 메시지 송수신을 담당한다.
+- 접속 상태 서버(presence server)는 온라인/오프라인 상태를 관리한다.
+- API 서버는 로그인, 회원 가입, 프로필 변경 등 나머지 모든 것을 처리한다.
+- 알림 서버는 푸시 알림을 보낸다.
+- 마지막으로, 채팅 이력은 키-값 저장소에 보관한다. 채팅 이력 데이터베이스로 키-값 저장소를 쓰는 이유는 다음과 같다.
+   - 수평적 규모 확장이 쉽다.
+   - 데이터 접근 지연 시간이 매우 짧다.
+   - 관계형 데이터베이스는 롱 테일(long tail)에 해당하는 데이터를 잘 처리하지 못한다. 인덱스가 커지면 임의 접근(random access) 비용이 커진다.
+   - 검증된 다른 채팅 애플리케이션도 키-값 저장소를 채택했다. 페이스북 메신저와 디스코드가 그 예다.
 
 
-Following are the data models for one-to-one chat and group chat.
-   - The primary key is message id, which helps to decide message sequence.
-   - For the group chat the composite primary key is (channel_id, message_id). 
-      - IDs can be generated using a global 64-bit sequence number generator like Snowflake.
-      - A better approach is to use local sequence number generator. Local means IDs are only unique within a group.
-      - The reason why local IDs work is that maintaining message sequence within one-on-one channel or a group channel is sufficient. 
+다음은 1:1 채팅과 그룹 채팅의 데이터 모델이다.
+   - 기본 키는 메시지 ID이며, 메시지 순서를 정하는 데 쓰인다.
+   - 그룹 채팅의 기본 키는 (channel_id, message_id) 복합 키다.
+      - ID는 Snowflake 같은 전역 64비트 일련번호 생성기로 만들 수 있다.
+      - 더 나은 방법은 지역적 일련번호 생성기(local sequence number generator)를 쓰는 것이다. 여기서 지역적이란 ID가 그룹 안에서만 유일하면 된다는 뜻이다.
+      - 지역적 ID로 충분한 이유는 1:1 채널이나 그룹 채널 안에서만 메시지 순서를 유지하면 되기 때문이다.
       
-      <img src="./images/one-to-one-chat.png" alt="One to one chat design" width="300">   
-      <img src="./images/group-chat.png" alt="Group chat design" width="300">   
+      <img src="./images/one-to-one-chat.png" alt="1:1 채팅 데이터 모델" width="300">   
+      <img src="./images/group-chat.png" alt="그룹 채팅 데이터 모델" width="300">   
 
 
-## Step 3: Design Deep Dive
+## 3단계: 상세 설계
 
-### Service Discovery
-
-<div style="margin-left:3rem">
-   <img src="./images/zookeeper.png" alt="Zookeeper" width="400">   
-</div>
-
-- The primary role of service discovery is to recommend the best chat server for a client based
-on the criteria like geographical location, server capacity. 
-- Uses **Apache Zookeeper** to allocate chat servers based on criteria like geographic location and server capacity.
-- Ensures efficient load distribution and minimizes latency.
-
-
-### Messaging Flows
-#### One-on-One Chat
-
-
-1. User A sends a message to Chat Server 1.
-2. Chat Server 1 assigns a unique message ID and stores the message in a key-value store.
-3. If User B is online, the message is forwarded to Chat Server 2, maintaining a persistent WebSocket connection.
-4. If User B is offline, a push notification is sent.
-
-
-
-#### Group Chat
+### 서비스 탐색
 
 <div style="margin-left:3rem">
-   <img src="./images/group-chat-flow.png" alt="Group Chat Flow" width="400">  
+   <img src="./images/zookeeper.png" alt="주키퍼" width="400">   
 </div>
 
-- Messages are copied to individual inboxes for each recipient in the group.
-- Simplifies synchronization but becomes expensive for larger groups.
-- On the recipient side, a recipient can receive messages from multiple users. Each recipient
-has an inbox (message sync queue) which contains messages from different senders.
+- 서비스 탐색의 주된 역할은 지리적 위치, 서버 용량 같은 기준에 따라 클라이언트에 가장 적합한 채팅 서버를 추천하는 것이다.
+- **Apache Zookeeper**를 사용해 지리적 위치와 서버 용량 등을 기준으로 채팅 서버를 할당한다.
+- 부하를 효율적으로 분산하고 지연 시간을 최소화한다.
+
+
+### 메시지 흐름
+#### 1:1 채팅
+
+
+1. 사용자 A가 채팅 서버 1로 메시지를 보낸다.
+2. 채팅 서버 1은 유일한 메시지 ID를 부여하고 메시지를 키-값 저장소에 저장한다.
+3. 사용자 B가 온라인이면, 메시지는 사용자 B와 웹소켓 지속 연결을 유지하고 있는 채팅 서버 2로 전달된다.
+4. 사용자 B가 오프라인이면 푸시 알림을 보낸다.
+
+
+
+#### 그룹 채팅
+
+<div style="margin-left:3rem">
+   <img src="./images/group-chat-flow.png" alt="그룹 채팅 흐름" width="400">  
+</div>
+
+- 메시지는 그룹의 수신자마다 개별 수신함에 복사된다.
+- 동기화가 단순해지지만, 그룹이 커지면 비용이 많이 든다.
+- 수신자 측에서는 여러 사용자로부터 메시지를 받을 수 있다. 각 수신자는 여러 발신자의 메시지를 담는 수신함(메시지 동기화 큐)을 갖는다.
 
 ---
 
-#### Message Synchronization
+#### 메시지 동기화
 
-Many users have multiple devices. We need to synchronize the message across the devices.
-Each device maintains a variable called cur_max_message_id, which keeps track of the latest
-message ID on the device. Messages that satisfy the following two conditions are considered
-as news messages:
+사용자는 대개 단말을 여러 대 쓰므로 단말 간에 메시지를 동기화해야 한다. 각 단말은 해당 단말에서 관측된 가장 최신 메시지 ID를 추적하는 cur_max_message_id 변수를 유지한다. 다음 두 조건을 만족하는 메시지는 새 메시지로 간주한다.
 
 <div style="margin-left:3rem">
-   <img src="./images/message-synchronization.png" alt="Message Synchronization"  width="400">  
+   <img src="./images/message-synchronization.png" alt="메시지 동기화"  width="400">  
 </div>
 
-- The recipient ID is equal to the currently logged-in user ID.
-- Message ID in the key-value store is larger than cur_max_message_id
+- 수신자 ID가 현재 로그인한 사용자 ID와 같다.
+- 키-값 저장소에 보관된 메시지의 ID가 cur_max_message_id보다 크다.
 
 ---
 
-### Online Presence
-1. **Heartbeat Mechanism:** 
+### 접속 상태 표시
+1. **박동(heartbeat) 검사:** 
    <div style="margin-left:3rem">
-      <img src="./images/heartbeat-mechanism.png" alt="Heartbeat Mechanism" width="400"> 
+      <img src="./images/heartbeat-mechanism.png" alt="박동 검사" width="400"> 
    </div>
    
-   - Clients send periodic heartbeats to presence servers to indicate they are online. 
-   - If no heartbeat is received within a threshold (for eg x = 30), the user is marked offline.
+   - 클라이언트는 접속 상태 서버에 주기적으로 박동 이벤트를 보내 온라인임을 알린다.
+   - 정해진 시간(예: x = 30초) 안에 박동 이벤트를 받지 못하면 사용자를 오프라인으로 표시한다.
 
      
 
-2. **Fanout Model:** 
+2. **상태 정보 전송(팬아웃):** 
 
    <div style="margin-left:3rem">
-      <img src="./images/fanout-presence.png" alt="Fanout Presence" width="400"> 
+      <img src="./images/fanout-presence.png" alt="상태 정보 팬아웃" width="400"> 
    </div>
 
-   - Presence updates are pushed to friends using a publish-subscribe model in which each friend pair maintains a channel.
-   - When User A’s online status changes, it publishes the event to three channels, channel A-B, A-C, and A-D. 
-   - Those three channels are subscribed by User B, C, and D, respectively which get the online status updates.
-   - The above design is effective for a small user groups.
+   - 발행-구독(publish-subscribe) 모델로 친구들에게 상태 변화를 전달하며, 친구 관계마다 채널을 하나씩 둔다.
+   - 사용자 A의 접속 상태가 바뀌면 A-B, A-C, A-D 세 채널에 이벤트를 발행한다.
+   - 사용자 B, C, D가 각 채널을 구독하고 있으므로 상태 변화를 전달받는다.
+   - 이 설계는 그룹 크기가 작을 때 효과적이다.
 
 
 ---
 
-## Additional Considerations
-### Scalability
-- **Horizontal Scaling:** Add servers as user count increases.
-- **Load Balancing:** Distribute traffic evenly across servers.
-- **Caching:** Reduce database load and improve latency.
+## 추가 고려 사항
+### 규모 확장성
+- **수평적 규모 확장:** 사용자 수가 늘어나면 서버를 추가한다.
+- **로드밸런싱:** 트래픽을 서버들에 고르게 분산한다.
+- **캐시:** 데이터베이스 부하를 줄이고 지연 시간을 개선한다.
 
-### Error Handling
-- **Retry Mechanisms:** Handle message delivery failures with retries and queuing.
-- **Server Failures:** Use service discovery to allocate new servers in case of failures.
+### 오류 처리
+- **재시도 메커니즘:** 메시지 전달이 실패하면 재시도와 큐잉으로 처리한다.
+- **서버 장애:** 장애가 나면 서비스 탐색으로 새 서버를 할당한다.
 
-### Future Extensions
-1. **Media Support:** Add handling for photos and videos, including compression and cloud storage.
-2. **End-to-End Encryption:** Ensure message privacy.
-3. **Client-Side Caching:** Reduce data transfer for better performance.
-4. **Improved Load Times:** Use geographically distributed caching networks.
+### 향후 확장
+1. **미디어 지원:** 사진과 동영상을 처리하며, 압축과 클라우드 저장소 사용을 포함한다.
+2. **종단 간 암호화(end-to-end encryption):** 메시지의 기밀성을 보장한다.
+3. **클라이언트 측 캐시:** 데이터 전송량을 줄여 성능을 높인다.
+4. **로딩 속도 개선:** 지리적으로 분산된 캐시 네트워크를 사용한다.
 
