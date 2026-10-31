@@ -1,90 +1,90 @@
-# Chapter 20: Metrics Monitoring and Alerting System
+# 20장: 지표 모니터링 및 경보 시스템
 
-## Introduction
-This chapter focuses on designing a highly scalable **metrics monitoring and alerting system**, which is critical for ensuring high availability and reliability.
-
----
-
-## Step 1: Understand the Problem and Establish Design Scope
-A metrics monitoring system can mean a lot of different things - eg you don't want to design a logs aggregation system, when the interviewer is interested in infra metrics only.
-
-Let's try to understand the problem first:
- - C: Who are we building the system for? An in-house monitoring system for a big tech company or a SaaS like DataDog?
- - I: We are building for internal use only.
- - C: Which metrics do we want to collect?
- - I: Operational system metrics - CPU load, Memory, Data disk space. But also high-level metrics like requests per second. Business metrics are not in scope.
- - C: What is the scale of the infrastructure we're monitoring?
- - I: 100mil daily active users, 1000 server pools, 100 machines per pool
- - C: How long should we keep the data?
- - I: Let's assume 1y retention.
- - C: May we reduce metrics data resolution for long-term storage?
- - I: Keep newly received metrics for 7 days. Roll them up to 1m resolution for next 30 days. Further roll them up to 1h resolution after 30 days.
- - C: What are the supported alert channels?
- - I: Email, phone, PagerDuty or webhooks.
- - C: Do we need to collect logs such as error or access logs?
- - I: No
- - C: Do we need to support distributed system tracing?
- - I: No
-
-### **High-level requirements and assumptions**
-The infrastructure being monitored is large-scale:
- - 100mil DAU
- - 1000 server pools * 100 machines * ~100 metrics per machine -> ~10mil metrics
- - 1-year data retention
- - Data retention policy - raw for 7d, 1-minute resolution for 30d, 1h resolution for 1y
-
-A variety of metrics can be monitored:
- - CPU load
- - Request count
- - Memory usage
- - Message count in message queues
-
-### **Non-functional requirements**
- - **Scalability**: System should be scalable to accommodate more metrics and alerts
- - **Low latency**: System needs to have low query latency for dashboards and alerts
- - **Reliability**: System should be highly reliable to avoid missing critical alerts
- - **Flexibility**: System should be able to easily integrate new technologies in the future
-
-What requirements are out of scope?
- - **Log monitoring**: the ELK stack is very popular for this use-case
- - **Distributed system tracing**: this refers to collecting data about a request lifecycle as it flows through multiple services within the system
+## 소개
+이 장에서는 높은 가용성과 안정성을 보장하는 데 꼭 필요한, 규모 확장성이 뛰어난 **지표 모니터링 및 경보 시스템(metrics monitoring and alerting system)** 을 설계하는 데 집중한다.
 
 ---
 
-## Step 2: Propose High-Level Design and Get Buy-In
+## 1단계: 문제 이해 및 설계 범위 확정
+지표 모니터링 시스템이 뜻하는 바는 아주 다양하다. 예를 들어 면접관은 인프라 지표에만 관심이 있는데 로그 수집 시스템을 설계하면 곤란하다.
 
-### **Fundamentals**
-There are five core components involved in a metrics monitoring and alerting system:
+먼저 문제를 이해해 보자(지: 지원자, 면: 면접관).
+ - 지: 누구를 위한 시스템인가요? 대형 IT 회사의 사내 모니터링 시스템인가요, 아니면 DataDog 같은 SaaS인가요?
+ - 면: 사내용입니다.
+ - 지: 어떤 지표를 수집해야 하나요?
+ - 면: CPU 부하, 메모리, 데이터 디스크 공간 같은 운영 시스템 지표입니다. 초당 요청 수 같은 고수준 지표도 포함됩니다. 비즈니스 지표는 범위에서 제외합니다.
+ - 지: 모니터링할 인프라의 규모는 어느 정도인가요?
+ - 면: 일간 능동 사용자 1억 명, 서버 풀 1,000개, 풀당 서버 100대입니다.
+ - 지: 데이터는 얼마 동안 보관해야 하나요?
+ - 면: 1년 보관으로 가정합시다.
+ - 지: 장기 보관용 지표 데이터는 해상도를 낮춰도 될까요?
+ - 면: 새로 수집한 지표는 7일 동안 그대로 보관합니다. 그 뒤 30일 동안은 1분 단위로, 30일 이후로는 1시간 단위로 묶어서(roll up) 보관합니다.
+ - 지: 지원해야 할 경보 채널은 무엇인가요?
+ - 면: 이메일, 전화, PagerDuty, 웹훅입니다.
+ - 지: 오류 로그나 접근 로그 같은 로그도 수집해야 하나요?
+ - 면: 아니요.
+ - 지: 분산 시스템 추적도 지원해야 하나요?
+ - 면: 아니요.
+
+### **개략적인 요구 사항과 가정**
+모니터링 대상 인프라는 대규모다.
+ - DAU 1억 명
+ - 서버 풀 1,000개 * 서버 100대 * 서버당 약 100개 지표 -> 약 1,000만 개 지표
+ - 데이터 보관 기간 1년
+ - 데이터 보관 정책 - 7일간 원본 그대로, 30일간 1분 단위, 1년간 1시간 단위
+
+다양한 지표를 모니터링할 수 있다.
+ - CPU 부하
+ - 요청 수
+ - 메모리 사용량
+ - 메시지 큐 안의 메시지 수
+
+### **비기능 요구 사항**
+ - **규모 확장성**: 늘어나는 지표와 경보를 감당할 수 있도록 확장 가능해야 한다.
+ - **낮은 지연 시간**: 대시보드와 경보를 위해 질의 지연 시간이 짧아야 한다.
+ - **안정성**: 중요한 경보를 놓치지 않도록 안정성이 높아야 한다.
+ - **유연성**: 앞으로 새로운 기술을 쉽게 통합할 수 있어야 한다.
+
+범위에서 제외하는 요구 사항:
+ - **로그 모니터링**: 이 용도로는 ELK 스택이 널리 쓰인다.
+ - **분산 시스템 추적**: 요청이 시스템 안의 여러 서비스를 거쳐 가는 전체 생명 주기에 대한 데이터를 수집하는 것을 말한다.
+
+---
+
+## 2단계: 개략적인 설계안 제시 및 동의 구하기
+
+### **기본 사항**
+지표 모니터링 및 경보 시스템은 다섯 가지 핵심 컴포넌트로 구성된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-monitoring-core-components.png" alt="metrics-monitoring-core-components" width="500" />
+    <img src="./images/metrics-monitoring-core-components.png" alt="지표 모니터링 핵심 컴포넌트" width="500" />
 </div>
 
- - **Data collection**: collect metrics data from different sources
- - **Data transmission**: transfer data from sources to the metrics monitoring system
- - **Data storage**: organize and store incoming data
- - **Alerting**: Analyze incoming data, detect anomalies and generate alerts
- - **Visualization**: Present data in graphs, charts, etc
+ - **데이터 수집**: 여러 출처에서 지표 데이터를 수집한다.
+ - **데이터 전송**: 출처에서 지표 모니터링 시스템으로 데이터를 보낸다.
+ - **데이터 저장소**: 들어오는 데이터를 정리해 저장한다.
+ - **경보**: 들어오는 데이터를 분석해 이상을 감지하고 경보를 만든다.
+ - **시각화**: 데이터를 그래프, 차트 등으로 보여 준다.
 
-### **Data model**
-Metrics data is usually recorded as a time-series, which contains a set of values with timestamps.
-The series can be identified by name and an optional set of tags.
+### **데이터 모델**
+지표 데이터는 보통 타임스탬프가 붙은 값들의 집합인 시계열(time-series)로 기록한다.
+시계열은 이름과, 선택적인 태그(레이블) 집합으로 식별할 수 있다.
 
-Example 1 - What is the CPU load on production server instance i631 at 20:00?
+예 1 - 운영 서버 인스턴스 i631의 20:00 시점 CPU 부하는 얼마인가?
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-example-1.png" alt="metrics-example-1" width="500" />
+    <img src="./images/metrics-example-1.png" alt="지표 예시 1" width="500" />
 </div>
 
-The data can be identified by the following table:
+이 데이터는 다음 표로 식별할 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-example-1-data.png" alt="metrics-example-1-data" width="500" />
+    <img src="./images/metrics-example-1-data.png" alt="지표 예시 1 데이터" width="500" />
 </div>
 
-The time series is identified by the metric name, labels and a single point in at a specific time.
+시계열은 지표 이름, 레이블, 그리고 특정 시점의 값 하나로 식별된다.
 
-Example 2 - What is the average CPU load across all web servers in the us-west region for the last 10min?
+예 2 - 지난 10분 동안 us-west 지역에 있는 모든 웹 서버의 평균 CPU 부하는 얼마인가?
 
 ```
 CPU.load host=webserver01,region=us-west 1613707265 50
@@ -102,201 +102,201 @@ CPU.load host=webserver01,region=us-west 1613707265 76
 CPU.load host=webserver01,region=us-west 1613707265 83
 ```
 
-This is an example data we might pull from storage to answer that question.
-The average CPU load can be calculated by averaging the values in the last column of the rows.
+이 질문에 답하기 위해 저장소에서 가져올 만한 데이터의 예다.
+각 행의 마지막 열에 있는 값들의 평균을 구하면 평균 CPU 부하를 계산할 수 있다.
 
-The format shown above is called the line protocol and is used by many popular monitoring software in the market - eg Prometheus, OpenTSDB.
+위 형식을 행 프로토콜(line protocol)이라고 하며, Prometheus, OpenTSDB 등 시장에서 널리 쓰이는 여러 모니터링 소프트웨어가 사용한다.
 
-What every time series consists of:
-
-<div style="margin-left:3rem">
-    <img src="./images/time-series-data-example.png" alt="time-series-data-example" width="500" />
-</div>
-
-A good way to visualize how data looks like:
+모든 시계열은 다음으로 구성된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/time-series-data-viz.png" alt="time-series-data-viz" width="500" />
+    <img src="./images/time-series-data-example.png" alt="시계열 데이터 예시" width="500" />
 </div>
 
- - The x axis is the time
- - the y axis is the dimension you're querying - eg metric name, tag, etc.
-
-The data access pattern is write-heavy and spiky reads as we collect a lot of metrics, but they are infrequently accessed, although in bursts when eg there are ongoing incidents.
-
-The data storage system is the heart of this design. 
- - It is not recommended to use a general-purpose database for this problem, although you could achieve good scale \w expert-level tuning.
- - Using a NoSQL database can work in theory, but it is hard to devise a scalable schema for effectively storing and querying time-series data.
-
-There are many databases, specifically tailored for storing time-series data. Many of them support custom query interfaces which allow for effective querying of time-series data.
- - OpenTSDB is a distributed time-series database, but it is based on Hadoop and HBase. If you don't have that infrastructure provisioned, it would be hard to use this tech.
- - Twitter uses MetricsDB, while Amazon offers Timestream.
- - The two most popular time-series databases are InfluxDB and Prometheus. 
- - They are designed to store large volumes of time-series data. Both of them are based on in-memory cache + on-disk storage.
-
-Example scale of InfluxDB - more than 250k writes per second when provisioned with 8 cores and 32gb RAM:
+데이터의 모양을 시각화하면 다음과 같다.
 
 <div style="margin-left:3rem">
-    <img src="./images/influxdb-scale.png" alt="influxdb-scale" width="500" />
+    <img src="./images/time-series-data-viz.png" alt="시계열 데이터 시각화" width="500" />
 </div>
 
-It is not expected for you to understand the internals of a metrics database as it is niche knowledge. You might be asked only if you've mentioned it on your resume.
+ - x축은 시간이다.
+ - y축은 질의하는 차원(예: 지표 이름, 태그 등)이다.
 
-For the purposes of the interview, it is sufficient to understand that metrics are time-series data and to be aware of popular time-series databases, like InfluxDB.
+데이터 접근 패턴은 쓰기가 많고 읽기는 간헐적으로 몰린다. 지표를 아주 많이 수집하지만 평소에는 거의 조회하지 않다가, 장애가 진행 중일 때처럼 특정 시점에 집중적으로 조회하기 때문이다.
 
-One nice feature of time-series databases is the efficient aggregation and analysis of large amounts of time-series data by labels.
-InfluxDB, for example, builds indexes for each label.
+데이터 저장소는 이 설계의 핵심이다.
+ - 범용 데이터베이스는 이 문제에 권장하지 않는다. 전문가 수준으로 튜닝하면 좋은 규모를 낼 수는 있다.
+ - NoSQL 데이터베이스도 이론상 가능하지만, 시계열 데이터를 효과적으로 저장하고 질의할 수 있는 확장 가능한 스키마를 고안하기 어렵다.
 
-It is critical, however, to keep the cardinality of labels low - ie, not using too many unique labels.
+시계열 데이터 저장에 특화된 데이터베이스가 많다. 상당수는 시계열 데이터를 효과적으로 질의할 수 있는 자체 질의 인터페이스를 지원한다.
+ - OpenTSDB는 분산 시계열 데이터베이스지만 하둡과 HBase를 기반으로 한다. 그 인프라가 갖춰져 있지 않다면 쓰기 어렵다.
+ - 트위터는 MetricsDB를 쓰고, 아마존은 Timestream을 제공한다.
+ - 가장 인기 있는 시계열 데이터베이스 두 가지는 InfluxDB와 Prometheus다.
+ - 둘 다 대량의 시계열 데이터를 저장하도록 설계되었으며, 메모리 캐시와 디스크 저장소를 함께 사용한다.
 
-### **High-level Design**
+InfluxDB 규모의 예 - 8코어, 32 GB RAM으로 초당 250,000건 이상의 쓰기를 처리한다.
 
 <div style="margin-left:3rem">
-    <img src="./images/high-level-design.png" alt="high-level-design" width="500" />
+    <img src="./images/influxdb-scale.png" alt="InfluxDB 규모" width="500" />
 </div>
 
- - **Metrics source**: can be application servers, SQL databases, message queues, etc.
- - **Metrics collector**: Gathers metrics data and writes to time-series database
- - **Time-series database**: stores metrics as time-series. Provides a custom query interface for analyzing large amounts of metrics.
- - **Query service**: Makes it easy to query and retrieve data from the time-series DB. Could be replaced entirely by the DB's interface if it's sufficiently powerful.
- - **Alerting system**: Sends alert notifications to various alerting destinations.
- - **Visualization system**: Shows metrics in the form of graphs/charts.
+지표 데이터베이스의 내부 구조는 전문적인 지식이므로 면접에서 알고 있으리라 기대하지는 않는다. 이력서에 언급했을 때만 질문받을 수 있다.
+
+면접에서는 지표가 시계열 데이터라는 점과 InfluxDB 같은 대표적인 시계열 데이터베이스를 알고 있는 것으로 충분하다.
+
+시계열 데이터베이스의 좋은 특징 하나는 대량의 시계열 데이터를 레이블별로 효율적으로 집계·분석할 수 있다는 것이다.
+예를 들어 InfluxDB는 레이블마다 색인을 만든다.
+
+다만 레이블의 기수(cardinality)를 낮게 유지하는 것, 즉 고유한 레이블 값을 너무 많이 쓰지 않는 것이 매우 중요하다.
+
+### **개략적인 설계**
+
+<div style="margin-left:3rem">
+    <img src="./images/high-level-design.png" alt="개략적인 설계" width="500" />
+</div>
+
+ - **지표 출처**: 애플리케이션 서버, SQL 데이터베이스, 메시지 큐 등이 될 수 있다.
+ - **지표 수집기**: 지표 데이터를 모아 시계열 데이터베이스에 기록한다.
+ - **시계열 데이터베이스**: 지표를 시계열 데이터로 저장한다. 대량의 지표를 분석할 수 있는 자체 질의 인터페이스를 제공한다.
+ - **질의 서비스**: 시계열 데이터베이스에서 데이터를 쉽게 질의하고 가져올 수 있게 한다. 데이터베이스 인터페이스가 충분히 강력하다면 이것으로 완전히 대체할 수도 있다.
+ - **경보 시스템**: 다양한 경보 대상으로 경보를 보낸다.
+ - **시각화 시스템**: 지표를 그래프나 차트 형태로 보여 준다.
 
 ---
 
-## Step 3: Design Deep Dive
-Let's deep dive into several of the more interesting parts of the system.
+## 3단계: 상세 설계
+시스템에서 흥미로운 부분 몇 가지를 깊이 살펴보자.
 
-### **Metrics collection**
-For metrics collection, occasional data loss is not critical. It's acceptable for clients to fire and forget.
-
-<div style="margin-left:3rem">
-    <img src="./images/metrics-collection.png" alt="metrics-collection" width="500" />
-</div>
-
-There are two ways to implement metrics collection - pull or push.
-
-Here's how the pull model might look like:
+### **지표 수집**
+지표 수집에서는 데이터가 가끔 유실되어도 큰 문제가 아니다. 클라이언트는 보내고 잊어버려도(fire and forget) 된다.
 
 <div style="margin-left:3rem">
-    <img src="./images/pull-model-example.png" alt="pull-model-example" width="500" />
+    <img src="./images/metrics-collection.png" alt="지표 수집" width="500" />
 </div>
 
-For this solution, the metrics collector needs to maintain an up-to-date list of services and metrics endpoints.
-We can use Zookeeper or etcd for that purpose - service discovery.
+지표 수집 방법은 풀(pull)과 푸시(push) 두 가지다.
 
-Service discovery contains contains configuration rules about when and where to collect metrics from:
+풀 모델은 다음과 같다.
 
 <div style="margin-left:3rem">
-    <img src="./images/service-discovery-example.png" alt="service-discovery-example" width="500" />
+    <img src="./images/pull-model-example.png" alt="풀 모델 예시" width="500" />
 </div>
 
-Here's a detailed explanation of the metrics collection flow:
+이 방법에서는 지표 수집기가 서비스와 지표 엔드포인트 목록을 최신 상태로 유지해야 한다.
+이를 위해 ZooKeeper나 etcd를 서비스 탐색 용도로 쓸 수 있다.
+
+서비스 탐색에는 언제, 어디서 지표를 수집할지에 관한 설정 규칙이 들어 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-collection-flow.png" alt="metrics-collection-flow" width="500" />
+    <img src="./images/service-discovery-example.png" alt="서비스 탐색 예시" width="500" />
 </div>
 
- - Metrics collector fetches configuration metadata from service discovery. This includes pulling interval, IP addresses, timeout & retry params.
- - Metrics collector pulls metrics data via a pre-defined http endpoint (eg `/metrics`). This is typically done by a client library.
- - Alternatively, the metrics collector can register a change event notification with the service discovery to be notified once the service endpoint changes.
- - Another option is for the metrics collector to periodically poll for metrics endpoint configuration changes.
-
-At our scale, a single metrics collector is not enough. There must be multiple instances. 
-However, there must also be some kind of synchronization among them so that two collectors don't collect the same metrics twice.
-
-One solution for this is to position collectors and servers on a consistent hash ring and associate a set of servers with a single collector only:
+지표 수집 흐름을 자세히 보면 다음과 같다.
 
 <div style="margin-left:3rem">
-    <img src="./images/consistent-hash-ring.png" alt="consistent-hash-ring" width="500" />
+    <img src="./images/metrics-collection-flow.png" alt="지표 수집 흐름" width="500" />
 </div>
 
-With the push model, on the other hand, services push their metrics to the metrics collector proactively:
+ - 지표 수집기는 서비스 탐색에서 설정 메타데이터를 가져온다. 여기에는 수집 주기, IP 주소, 타임아웃과 재시도 인자가 들어 있다.
+ - 지표 수집기는 미리 정의된 HTTP 엔드포인트(예: `/metrics`)에서 지표 데이터를 가져온다. 이 엔드포인트는 보통 클라이언트 라이브러리가 제공한다.
+ - 또는 지표 수집기가 서비스 탐색에 변경 이벤트 알림을 등록해, 서비스 엔드포인트가 바뀌면 통보받을 수 있다.
+ - 지표 수집기가 지표 엔드포인트 설정 변경을 주기적으로 확인(polling)하는 방법도 있다.
+
+우리 규모에서는 지표 수집기 하나로는 부족하므로 여러 인스턴스를 두어야 한다.
+그런데 두 수집기가 같은 지표를 중복 수집하지 않도록 수집기들 사이에 일종의 조율이 필요하다.
+
+한 가지 해결책은 수집기와 서버를 안정 해시 링 위에 배치하고, 서버 집합 하나를 수집기 하나에만 대응시키는 것이다.
 
 <div style="margin-left:3rem">
-    <img src="./images/push-model-example.png" alt="push-model-example" width="500" />
+    <img src="./images/consistent-hash-ring.png" alt="안정 해시 링" width="500" />
 </div>
 
-In this approach, typically a collection agent is installed alongside service instances. 
-The agent collects metrics from the server and pushes them to the metrics collector.
+반면 푸시 모델에서는 서비스가 지표 수집기로 지표를 능동적으로 보낸다.
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-collector-agent.png" alt="metrics-collector-agent" width="500" />
+    <img src="./images/push-model-example.png" alt="푸시 모델 예시" width="500" />
 </div>
 
-With this model, we can potentially aggregate metrics before sending them to the collector, which reduces the volume of data processed by the collector.
+이 방법에서는 보통 서비스 인스턴스와 함께 수집 에이전트를 설치한다.
+에이전트는 서버에서 지표를 모아 지표 수집기로 보낸다.
 
-On the flip side, metrics collector can reject push requests as it can't handle the load. 
-It is important, hence, to add the collector to an auto-scaling group behind a load balancer.
+<div style="margin-left:3rem">
+    <img src="./images/metrics-collector-agent.png" alt="지표 수집 에이전트" width="500" />
+</div>
 
-so which one is better? There are trade-offs between both approaches and different systems use different approaches:
- - Prometheus uses a pull architecture
- - Amazon Cloud Watch and Graphite use a push architecture
+이 모델에서는 수집기로 보내기 전에 지표를 집계할 수 있어, 수집기가 처리할 데이터 양을 줄일 수 있다.
 
-Here are some of the main differences between push and pull:
-|                                        | Pull                                                                                                                                                                                                    | Push                                                                                                                                                                                                                                    |
+반대로 지표 수집기가 부하를 감당하지 못해 푸시 요청을 거부할 수도 있다.
+따라서 수집기를 로드밸런서 뒤의 오토스케일링 그룹에 두는 것이 중요하다.
+
+그럼 어느 쪽이 나을까? 두 방법 사이에는 트레이드오프가 있으며, 시스템마다 다른 방법을 쓴다.
+ - Prometheus는 풀 아키텍처를 쓴다.
+ - Amazon CloudWatch와 Graphite는 푸시 아키텍처를 쓴다.
+
+푸시와 풀의 주요 차이는 다음과 같다.
+|                                        | 풀                                                                                                                                                                                                    | 푸시                                                                                                                                                                                                                                    |
 |----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Easy debugging                         | The /metrics endpoint on application servers used for pulling metrics can be used to view metrics at any time. You can even do this on your laptop. Pull wins.                                          | If the metrics collector doesn't receive metrics, the problem might be caused by network issues.                                                                                                                                        |
-| Health check                           | If an application server doesn't respond to the pull, you can quickly figure out if an application server is down. Pull wins.                                                                           | If the metrics collector doesn't receive metrics, the problem might be caused by network issues.                                                                                                                                        |
-| Short-lived jobs                       |                                                                                                                                                                                                         | Some of the batch jobs might be short-lived and don't last long enough to be pulled. Push wins. This can be fixed by introducing push gateways for the pull model [22].                                                                 |
-| Firewall or complicated network setups | Having servers pulling metrics requires all metric endpoints to be reachable. This is potentially problematic in multiple data center setups. It might require a more elaborate network infrastructure. | If the metrics collector is set up with a load balancer and an auto-scaling group, it is possible to receive data from anywhere. Push wins.                                                                                             |
-| Performance                            | Pull methods typically use TCP.                                                                                                                                                                         | Push methods typically use UDP. This means the push method provides lower-latency transports of metrics. The counterargument here is that the effort of establishing a TCP connection is small compared to sending the metrics payload. |
-| Data authenticity                      | Application servers to collect metrics from are defined in config files in advance. Metrics gathered from those servers are guaranteed to be authentic.                                                 | Any kind of client can push metrics to the metrics collector. This can be fixed by whitelisting servers from which to accept metrics, or by requiring authentication.                                                                   |
+| 손쉬운 디버깅                         | 지표를 가져가는 데 쓰는 애플리케이션 서버의 /metrics 엔드포인트로 언제든 지표를 볼 수 있다. 노트북에서도 가능하다. 풀이 유리하다.                                          | 지표 수집기가 지표를 받지 못하면 네트워크 문제 때문일 수 있다.                                                                                                                                        |
+| 상태 진단(health check)                           | 애플리케이션 서버가 풀 요청에 응답하지 않으면 서버가 다운되었는지 빠르게 알 수 있다. 풀이 유리하다.                                                                           | 지표 수집기가 지표를 받지 못하면 네트워크 문제 때문일 수 있다.                                                                                                                                        |
+| 생명 주기가 짧은 작업                       |                                                                                                                                                                                                         | 일부 배치 작업은 생명 주기가 너무 짧아 지표를 가져갈 틈이 없을 수 있다. 푸시가 유리하다. 풀 모델에 푸시 게이트웨이를 도입하면 해결할 수 있다[22].                                                                 |
+| 방화벽 등 복잡한 네트워크 구성 | 서버가 지표를 가져가려면 모든 지표 엔드포인트에 접근할 수 있어야 한다. 데이터 센터가 여러 개라면 문제가 될 수 있으며, 더 정교한 네트워크 인프라가 필요할 수 있다. | 지표 수집기가 로드밸런서와 오토스케일링 그룹으로 구성되어 있다면 어디서든 데이터를 받을 수 있다. 푸시가 유리하다.                                                                                             |
+| 성능                            | 풀 방식은 보통 TCP를 쓴다.                                                                                                                                                                         | 푸시 방식은 보통 UDP를 쓰므로 지표 전송 지연 시간이 더 짧다. 반론으로, TCP 연결을 맺는 비용은 지표 페이로드를 보내는 비용에 비하면 작다는 주장도 있다. |
+| 데이터 신빙성                      | 지표를 수집할 애플리케이션 서버 목록이 설정 파일에 미리 정의되어 있으므로, 그 서버들에서 모은 지표는 믿을 수 있다.                                                 | 어떤 클라이언트든 지표 수집기로 지표를 보낼 수 있다. 지표를 받을 서버의 허용 목록(whitelist)을 두거나 인증을 요구하면 해결할 수 있다.                                                                   |
 
-There is no clear winner. A large organization probably needs to support both. There might not be a way to install a push agent in the first place.
+어느 한쪽이 확실히 낫다고 할 수는 없다. 큰 조직이라면 둘 다 지원해야 할 것이다. 애초에 푸시 에이전트를 설치할 수 없는 경우도 있다.
 
-### **Scale the metrics transmission pipeline**
-
-<div style="margin-left:3rem">
-    <img src="./images/metrics-transmission-pipeline.png" alt="metrics-transmission-pipeline" width="500" />
-</div>
-
-The metrics collector is provisioned in an auto-scaling group, regardless if we use the push or pull model.
-
-There is a chance of data loss if the time-series DB is down, however. To mitigate this, we'll provision a queuing mechanism:
+### **지표 전송 파이프라인의 규모 확장**
 
 <div style="margin-left:3rem">
-    <img src="./images/queuing-mechanism.png" alt="queuing-mechanism" width="500" />
+    <img src="./images/metrics-transmission-pipeline.png" alt="지표 전송 파이프라인" width="500" />
 </div>
 
- - Metrics collectors push metrics data into kafka
- - Consumers or stream processing services such as Apache Storm, Flink or Spark process the data and push it to the time-series DB
+푸시 모델이든 풀 모델이든 지표 수집기는 오토스케일링 그룹으로 구성한다.
 
-This approach has several advantages:
- - Kafka is used as a highly-reliable and scalable distributed message platform
- - It decouples data collection and data processing from one another
- - It can prevent data loss by retaining the data in Kafka
-
-Kafka can be configured with one partition per metric name, so that consumers can aggregate data by metric names.
-To scale this, we can further partition by tags/labels and categorize/prioritize metrics to be collected first.
+하지만 시계열 데이터베이스에 장애가 나면 데이터가 유실될 수 있다. 이를 완화하기 위해 큐를 둔다.
 
 <div style="margin-left:3rem">
-    <img src="./images/metrics-collection-kafka.png" alt="metrics-collection-kafka" width="500" />
+    <img src="./images/queuing-mechanism.png" alt="큐 메커니즘" width="500" />
 </div>
 
-The main downside of using Kafka for this problem is the maintenance/operation overhead.
-An alternative is to use a large-scale ingestion system like [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf).
-It can be argued that using that would be as scalable as using Kafka for queuing.
+ - 지표 수집기는 지표 데이터를 Kafka에 넣는다.
+ - 소비자나 Apache Storm, Flink, Spark 같은 스트림 처리 서비스가 데이터를 처리해 시계열 데이터베이스에 넣는다.
 
-### **Where aggregations can happen**
-Metrics can be aggregated at several places. There are trade-offs between different choices:
- - **Collection agent**: client-side collection agent only supports simple aggregation logic. Eg collect a counter for 1m and send it to the metrics collector.
- - **Ingestion pipeline**: To aggregate data before writing to the DB, we need a stream processing engine like Flink. This reduces write volume, but we lose data precision as we don't store raw data.
- - **Query side**: We can aggregate data when we run queries via our visualization system. There is no data loss, but queries can be slow due to a lot of data processing.
+이 방법의 장점:
+ - Kafka는 안정성과 규모 확장성이 뛰어난 분산 메시지 플랫폼이다.
+ - 데이터 수집과 데이터 처리를 서로 분리한다.
+ - 데이터를 Kafka에 보관하므로 데이터 유실을 막을 수 있다.
 
-### **Query Service**
-Having a separate query service from the time-series DB decouples the visualization and alerting system from the database, which enables us to decouple the DB from clients and change it at will.
-
-We can add a Cache layer here to reduce the load to the time-series database:
+Kafka는 지표 이름마다 파티션을 하나씩 두도록 설정할 수 있다. 그러면 소비자가 지표 이름별로 데이터를 집계할 수 있다.
+더 확장하려면 태그/레이블별로 다시 파티션을 나누고, 먼저 수집할 지표를 분류하고 우선순위를 매길 수 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/cache-layer-query-service.png" alt="cache-layer-query-service" width="500" />
+    <img src="./images/metrics-collection-kafka.png" alt="Kafka를 이용한 지표 수집" width="500" />
 </div>
 
-We can also avoid adding a query service altogether as most visualization and alerting systems have powerful plugins to integrate with most time-series databases.
-With a well-chosen time-series DB, we might not need to introduce our own caching layer as well.
+이 문제에 Kafka를 쓸 때의 주된 단점은 유지·운영 부담이다.
+대안으로 [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) 같은 대규모 수집 시스템을 쓸 수 있다.
+이를 쓰면 Kafka로 큐를 두는 것만큼 확장 가능하다고 볼 수 있다.
 
-Most time-series DBs don't support SQL simply because it is ineffective for querying time-series data. Here's an example SQL query for computing an exponential moving average:
+### **집계 시점**
+지표는 여러 곳에서 집계할 수 있으며, 선택지마다 트레이드오프가 있다.
+ - **수집 에이전트**: 클라이언트 측 수집 에이전트는 단순한 집계 로직만 지원한다. 예를 들어 1분 동안 카운터를 모아 지표 수집기로 보낸다.
+ - **데이터 수집 파이프라인**: 데이터베이스에 기록하기 전에 집계하려면 Flink 같은 스트림 처리 엔진이 필요하다. 쓰기 양은 줄지만, 원본 데이터를 저장하지 않으므로 데이터 정밀도를 잃는다.
+ - **질의 시점**: 시각화 시스템으로 질의를 실행할 때 데이터를 집계할 수 있다. 데이터 손실은 없지만, 처리할 데이터가 많아 질의가 느려질 수 있다.
+
+### **질의 서비스**
+질의 서비스를 시계열 데이터베이스와 분리하면 시각화·경보 시스템과 데이터베이스 사이의 결합이 끊어진다. 그러면 클라이언트와 상관없이 데이터베이스를 자유롭게 바꿀 수 있다.
+
+시계열 데이터베이스의 부하를 줄이기 위해 여기에 캐시 계층을 둘 수 있다.
+
+<div style="margin-left:3rem">
+    <img src="./images/cache-layer-query-service.png" alt="질의 서비스의 캐시 계층" width="500" />
+</div>
+
+대부분의 시각화·경보 시스템은 주요 시계열 데이터베이스와 연동되는 강력한 플러그인을 갖추고 있으므로, 질의 서비스를 아예 두지 않을 수도 있다.
+시계열 데이터베이스를 잘 고르면 자체 캐시 계층도 필요 없을 수 있다.
+
+대부분의 시계열 데이터베이스는 SQL을 지원하지 않는다. 시계열 데이터를 질의하는 데 SQL이 효과적이지 않기 때문이다. 다음은 지수 이동 평균을 계산하는 SQL 질의의 예다.
 
 ```
 select id,
@@ -319,7 +319,7 @@ from (
 order by time_read;
 ```
 
-Here's the same query in Flux - query language used in InfluxDB:
+같은 질의를 InfluxDB의 질의 언어인 Flux로 쓰면 다음과 같다.
 
 ```
 from(db:"telegraf")
@@ -328,31 +328,31 @@ from(db:"telegraf")
   |> exponentialMovingAverage(size:-10s)
 ```
 
-### **Storage layer**
-It is important to choose the time-series database carefully.
+### **저장소 계층**
+시계열 데이터베이스는 신중하게 골라야 한다.
 
-According to research published by Facebook, ~85% of queries to the operational store were for data from the past 26h.
+페이스북이 발표한 연구에 따르면, 운영 데이터 저장소에 대한 질의의 약 85%가 지난 26시간 안의 데이터를 대상으로 한다.
 
-If we choose a database, which harnesses this property, it could have significant impact on system performance. InfluxDB is one such option.
+이 특성을 잘 활용하는 데이터베이스를 고르면 시스템 성능에 큰 영향을 줄 수 있다. InfluxDB가 그런 선택지 중 하나다.
 
-Regardless of the database we choose, there are some optimizations we might employ.
+어떤 데이터베이스를 고르든 적용할 수 있는 최적화 기법이 있다.
 
-Data encoding and compression can significantly reduce the size of data. Those features are usually built into a good time-series database.
+데이터 인코딩과 압축으로 데이터 크기를 크게 줄일 수 있다. 좋은 시계열 데이터베이스에는 보통 이런 기능이 내장되어 있다.
 
 <div style="margin-left:3rem">
-    <img src="./images/double-delta-encoding.png" alt="double-delta-encoding" width="500" />
+    <img src="./images/double-delta-encoding.png" alt="이중 델타 인코딩" width="500" />
 </div>
 
-In the above example, instead of storing full timestamps, we can store timestamp deltas.
+위 예에서는 전체 타임스탬프 대신 타임스탬프 차이(delta)만 저장한다.
 
-Another technique we can employ is down-sampling - converting high-resolution data to low-resolution in order to reduce disk usage.
+또 다른 기법은 다운샘플링(down-sampling)이다. 고해상도 데이터를 저해상도로 바꿔 디스크 사용량을 줄이는 것이다.
 
-We can use that for old data and make the rules configurable by data scientists, eg:
- - 7d - no down-sampling
- - 30d - down-sample to 1min
- - 1y - down-sample to 1h
+오래된 데이터에 적용하며, 데이터 과학자가 규칙을 설정할 수 있게 한다. 예를 들면 다음과 같다.
+ - 7일 - 다운샘플링하지 않음
+ - 30일 - 1분 단위로 다운샘플링
+ - 1년 - 1시간 단위로 다운샘플링
 
-For example, here's a 10-second resolution metrics table:
+예를 들어 다음은 10초 단위 지표 테이블이다.
 | metric | timestamp            | hostname | Metric_value |
 |--------|----------------------|----------|--------------|
 | cpu    | 2021-10-24T19:00:00Z | host-a   | 10           |
@@ -362,21 +362,21 @@ For example, here's a 10-second resolution metrics table:
 | cpu    | 2021-10-24T19:00:40Z | host-a   | 20           |
 | cpu    | 2021-10-24T19:00:50Z | host-a   | 30           |
 
-down-sampled to 30-second resolution:
+30초 단위로 다운샘플링하면 다음과 같다.
 | metric | timestamp            | hostname | Metric_value (avg) |
 |--------|----------------------|----------|--------------------|
 | cpu    | 2021-10-24T19:00:00Z | host-a   | 19                 |
 | cpu    | 2021-10-24T19:00:30Z | host-a   | 25                 |
 
-Finally, we can also use cold storage to use old data, which is no longer used. The financial cost for cold storage is much lower.
+마지막으로, 더 이상 쓰지 않는 오래된 데이터는 냉동 저장소(cold storage)로 옮길 수 있다. 냉동 저장소는 비용이 훨씬 저렴하다.
 
-### **Alerting system**
+### **경보 시스템**
 
 <div style="margin-left:3rem">
-    <img src="./images/alerting-system.png" alt="alerting-system" width="500" />
+    <img src="./images/alerting-system.png" alt="경보 시스템" width="500" />
 </div>
 
-Configuration is loaded to cache servers. Rules are typically defined in YAML format. Here's an example:
+설정 파일을 캐시 서버로 불러온다. 규칙은 보통 YAML 형식으로 정의한다. 예를 들면 다음과 같다.
 
 ```
 - name: instance_down
@@ -390,35 +390,35 @@ Configuration is loaded to cache servers. Rules are typically defined in YAML fo
       severity: page
 ```
 
-The alert manager fetches alert configurations from cache. Based on configuration rules, it also calls the query service at a predefined interval.
-If a rule is met, an alert event is created.
+경보 관리자(alert manager)는 캐시에서 경보 설정을 가져온다. 설정 규칙에 따라 미리 정한 주기로 질의 서비스를 호출한다.
+규칙을 만족하면 경보 이벤트를 만든다.
 
-Other responsibilities of the alert manager are:
- - Filtering, merging and deduplicating alerts. Eg if an alert of a single instance is triggered multiple times, only one alert event is generated.
- - Access control - it is important to restrict alert-management operations to certain individuals only
- - Retry - the manager ensures that the alert is propagated at least once.
+경보 관리자의 다른 역할:
+ - 경보 필터링, 병합, 중복 제거. 예를 들어 인스턴스 하나에서 같은 경보가 여러 번 발생하면 경보 이벤트는 하나만 만든다.
+ - 접근 제어 - 경보 관리 작업은 특정 인원만 할 수 있도록 제한하는 것이 중요하다.
+ - 재시도 - 경보가 최소 한 번은 전달되도록 보장한다.
 
-The alert store is a key-value database, like Cassandra, which keeps the state of all alerts. It ensures a notification is sent at least once.
-Once an alert is triggered, it is published to Kafka.
+경보 저장소는 Cassandra 같은 키-값 데이터베이스로, 모든 경보의 상태를 보관한다. 알림이 최소 한 번은 전송되도록 보장한다.
+경보가 발생하면 Kafka에 발행된다.
 
-Finally, alert consumers pull alerts data from Kafka and send notifications over to different channels - Email, text message, PagerDuty, webhooks.
+마지막으로 경보 소비자가 Kafka에서 경보 데이터를 가져와 이메일, 문자 메시지, PagerDuty, 웹훅 등 여러 채널로 알림을 보낸다.
 
-In the real-world, there are many off-the-shelf solutions for alerting systems. It is difficult to justify building your own system in-house.
+현실에서는 바로 쓸 수 있는 경보 시스템이 많다. 사내에서 직접 만드는 것을 정당화하기는 어렵다.
 
-### **Visualization system**
-The visualization system shows metrics and alerts over a time period. Here's an dashboard built with Grafana:
+### **시각화 시스템**
+시각화 시스템은 일정 기간의 지표와 경보를 보여 준다. 다음은 Grafana로 만든 대시보드다.
 
 <div style="margin-left:3rem">
-    <img src="./images/grafana-dashboard.png" alt="grafana-dashboard" width="500" />
+    <img src="./images/grafana-dashboard.png" alt="Grafana 대시보드" width="500" />
 </div>
 
-A high-quality visualization system is very hard to build. It is hard to justify not using an off-the-shelf solution like Grafana.
+품질 좋은 시각화 시스템은 만들기 매우 어렵다. Grafana 같은 기성 솔루션을 쓰지 않을 이유를 찾기 어렵다.
 
 ---
 
-## Step 4: Wrap up
-Here's our final design:
+## 4단계: 마무리
+최종 설계는 다음과 같다.
 
 <div style="margin-left:3rem">
-    <img src="./images/final-design.png" alt="final-design" width="500" />
+    <img src="./images/final-design.png" alt="최종 설계" width="500" />
 </div>
