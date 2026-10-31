@@ -1,262 +1,253 @@
-# Chapter 6: Design a Key-Value Store
+# 6장: 키-값 저장소 설계
 
-## Introduction
-A **key-value store** is a type of non-relational database where data is stored as key-value pairs. Each key is unique, and values are accessed using these keys. This chapter details how to design a scalable, high-availability distributed key-value store that supports operations like:
-- `put(key, value)` for inserting data.
-- `get(key)` for retrieving data.
+## 소개
+**키-값 저장소(key-value store)** 는 데이터를 키-값 쌍으로 저장하는 비관계형 데이터베이스다. 각 키는 유일하며, 값은 키를 통해서만 접근할 수 있다. 이 장에서는 다음 연산을 지원하는, 규모 확장이 쉽고 가용성이 높은 분산 키-값 저장소를 설계하는 방법을 자세히 살펴본다.
+- `put(key, value)`: 데이터 저장
+- `get(key)`: 데이터 조회
 
-### Characteristics of the Design
-- Small key-value pairs (<10 KB).
-- Supports big data with high availability and scalability.
-- Automatic scaling and tunable consistency.
-- Low latency.
-
----
-
-## Single Server Key-Value Store
-### Implementation
-- Use a **hash table** to store key-value pairs in memory.
-- Optimizations:
-  - Data compression.
-  - Storing less frequently accessed data on disk.
-
-### Limitation
-A single server's memory is limited, requiring a **distributed approach** for scalability.
+### 설계 특성
+- 키-값 쌍의 크기는 작다(10 KB 미만).
+- 높은 가용성과 규모 확장성을 갖추고 빅데이터를 지원한다.
+- 자동으로 규모를 확장하며, 일관성 수준을 조정할 수 있다.
+- 지연 시간이 짧다.
 
 ---
 
-## Distributed Key-Value Store
-A **distributed key-value store** partitions data across multiple servers and must address trade-offs outlined by the **CAP theorem**.
+## 단일 서버 키-값 저장소
+### 구현
+- **해시 테이블**을 사용해 키-값 쌍을 메모리에 저장한다.
+- 최적화 방법:
+  - 데이터 압축
+  - 자주 쓰지 않는 데이터는 디스크에 저장
 
-### CAP Theorem
-1. **Consistency:** All clients see the same data simultaneously.
-2. **Availability:** The system responds to every request, even if some nodes are down.
-3. **Partition Tolerance:** The system continues to operate despite network partitions.
+### 한계
+서버 한 대의 메모리는 한정되어 있으므로, 규모를 키우려면 **분산 방식**이 필요하다.
 
-**Trade-off:** According to CAP theorem only two of the three guarantees can be achieved.
+---
+
+## 분산 키-값 저장소
+**분산 키-값 저장소**는 데이터를 여러 서버에 나눠 저장하며, **CAP 정리**가 말하는 트레이드오프를 고려해야 한다.
+
+### CAP 정리
+1. **일관성(Consistency):** 모든 클라이언트가 동시에 같은 데이터를 본다.
+2. **가용성(Availability):** 일부 노드에 장애가 생겨도 시스템은 모든 요청에 응답한다.
+3. **파티션 감내(Partition Tolerance):** 네트워크 파티션이 생겨도 시스템은 계속 동작한다.
+
+**트레이드오프:** CAP 정리에 따르면 세 가지 중 두 가지만 동시에 만족할 수 있다.
 
 <p align="center">
   <img src="./images/cap.png" alt="CAP" width="400">
 </p>
 
-#### System Types:
-- **CP Systems:** Consistency and partition tolerance while sacrificing availability (e.g., banking systems).
-- **AP Systems:** Availability and partition tolerance while sacrificing consistency (e.g., eventual consistency).
-- **CA Systems:** Consistency and Availability while sacrificing partition tolerance.
+#### 시스템 유형
+- **CP 시스템:** 가용성을 희생하고 일관성과 파티션 감내를 지원한다(예: 은행 시스템).
+- **AP 시스템:** 일관성을 희생하고 가용성과 파티션 감내를 지원한다(예: 결과적 일관성).
+- **CA 시스템:** 파티션 감내를 희생하고 일관성과 가용성을 지원한다.
 
-    **Since network failure is unavoidable, a distributed system must tolerate network partition. Thus, a CA system cannot exist in real-world applications.**
+    **네트워크 장애는 피할 수 없으므로 분산 시스템은 반드시 네트워크 파티션을 감내해야 한다. 따라서 실제 환경에서 CA 시스템은 존재할 수 없다.**
 
-    In a distributed system, partitions are inevitable. When a partition occurs, we must choose between consistency and availability. For example, if node n3 goes down, 
-    any data written to nodes n1 or n2 cannot be propagated to n3. Conversely, if data is written to n3 but not yet propagated to n1 and n2, nodes n1 and n2 will have stale data.
+    분산 시스템에서 파티션은 피할 수 없다. 파티션이 생기면 일관성과 가용성 중 하나를 골라야 한다. 예를 들어 노드 n3가 다운되면 n1이나 n2에 기록된 데이터는 n3로 전파되지 않는다. 반대로 n3에 기록되었지만 아직 n1과 n2로 전파되지 않은 데이터가 있다면, n1과 n2는 오래된 데이터를 갖게 된다.
 
     <p align="center">
-    <img src="./images/server-down.png"  alt="Server down" width="400">
+    <img src="./images/server-down.png"  alt="서버 다운" width="400">
     </p>
     
-- If we choose CP system, we must block all write operations to n1 and n2 to avoid data inconsistency.
-- If we choose AP system, the system keeps accepting reads, even though it might return stale data. 
-For writes, n1 and n2 keep accepting writes,
-and data will be synced to n3 when the network partition is resolved.
+- CP 시스템을 선택하면 데이터 불일치를 피하기 위해 n1과 n2에 대한 쓰기 연산을 모두 막아야 한다.
+- AP 시스템을 선택하면 오래된 데이터를 반환할 위험이 있더라도 읽기 연산을 계속 허용한다. 쓰기의 경우 n1과 n2는 계속 쓰기 연산을 받아들이고, 파티션 문제가 해결되면 데이터를 n3로 동기화한다.
 
 ---
 
-## System Components
-### 1. Data Partitioning
-- **Technique:** Consistent Hashing is used to distribute data across multiple servers evenly.
-- **Advantages:**
-  - Automatic scaling with server addition/removal.
-  - Heterogeneity through virtual nodes. The number of virtual nodes for a server is proportional to the server capacity.
+## 시스템 컴포넌트
+### 1. 데이터 파티션
+- **기법:** 안정 해시를 사용해 데이터를 여러 서버에 고르게 분산한다.
+- **장점:**
+  - 서버를 추가·제거할 때 자동으로 규모가 조정된다.
+  - 가상 노드로 서버 간 성능 차이(다양성, heterogeneity)를 반영할 수 있다. 서버에 할당하는 가상 노드 수는 서버 용량에 비례한다.
 
-### 2. Data Replication
-- Replicate data across `N` servers for high availability.
-- The N servers are chosen by walking clockwise from the server position and choose the first N servers on the ring to store data copies.Place replicas in distinct data centers to improve reliability in case of virtual nodes.
+### 2. 데이터 다중화
+- 높은 가용성을 위해 데이터를 `N`개 서버에 다중화한다.
+- N개 서버는 링 위에서 키 위치로부터 시계 방향으로 돌면서 처음 만나는 N개 서버를 골라 데이터 사본을 저장한다. 가상 노드를 쓰는 경우, 안정성을 높이려면 사본을 서로 다른 데이터 센터에 둔다.
 
     <p align="center">
-    <img src="./images/data-replication.png" alt="Data replication" width="300">
+    <img src="./images/data-replication.png" alt="데이터 다중화" width="300">
     </p>
 
-### 3. Consistency
-Since data is replicated at multiple nodes, it must be synchronized across replicas.
-- **Quorum Consensus:**
-  - `N`: Total replicas.
-  - `W`: Write quorum size. For a write to be considered successful, write must be acknowledged from W replicas.
-  - `R`: Read quorum size. For a read to be considered as successful, read must wait for responses from at least R replicas.
-  - **Rule:** `W + R > N` ensures strong consistency.
-  - The configuration of W, R and N is a typical tradeoff between latency and consistency. 
+### 3. 일관성
+데이터가 여러 노드에 다중화되므로 사본 간에 동기화가 필요하다.
+- **정족수 합의(quorum consensus):**
+  - `N`: 사본 수
+  - `W`: 쓰기 정족수. 쓰기 연산이 성공했다고 보려면 W개 사본으로부터 쓰기 응답을 받아야 한다.
+  - `R`: 읽기 정족수. 읽기 연산이 성공했다고 보려면 최소 R개 사본으로부터 응답을 받아야 한다.
+  - **규칙:** `W + R > N`이면 강한 일관성이 보장된다.
+  - W, R, N 값을 정하는 것은 응답 지연과 데이터 일관성 사이의 전형적인 트레이드오프다.
 
     <p align="center">
-    <img src="./images/quorum-consensus.png"   alt="Quorum consensus" width="400">
+    <img src="./images/quorum-consensus.png"   alt="정족수 합의" width="400">
     </p>
     
-    - If R = 1 and W = N, the system is optimized for a fast read.
-    - If W = 1 and R = N, the system is optimized for fast write.
-    - If W + R > N, strong consistency is guaranteed (Usually N = 3, W = R = 2).
-    - If W + R <= N, strong consistency is not guaranteed.
+    - R = 1, W = N이면 빠른 읽기 연산에 최적화된 시스템이다.
+    - W = 1, R = N이면 빠른 쓰기 연산에 최적화된 시스템이다.
+    - W + R > N이면 강한 일관성이 보장된다(보통 N = 3, W = R = 2).
+    - W + R <= N이면 강한 일관성이 보장되지 않는다.
 
-- **Models**:
-  - **Strong Consistency:** A read operation returns a value corresponding to the result of the most updated write data item.
-  - **Weak Consistency:** Subsequent read operations may not see the most updated value.
-  - **Eventual Consistency:** Given enough time, all updates are propagated, and all replicas are consisten
+- **일관성 모델**:
+  - **강한 일관성(strong consistency):** 읽기 연산은 항상 가장 최근에 갱신된 결과를 반환한다.
+  - **약한 일관성(weak consistency):** 읽기 연산이 가장 최근에 갱신된 결과를 반환하지 못할 수 있다.
+  - **결과적 일관성(eventual consistency):** 충분한 시간이 지나면 모든 갱신 결과가 전파되어 모든 사본이 일관된 상태가 된다.
 
 
-### 4. Inconsistency Resolution
-Replication gives high availability but causes inconsistencies among replicas. Versioning and
-vector locks are used to solve inconsistency problems.
-- **Versioning:** 
-    - Use **vector clocks** to track data versions and resolve conflicts.
-    - Versioning means treating each data modification as a new immutable version of data.
+### 4. 비일관성 해소
+다중화는 가용성을 높이지만 사본 간 불일치를 일으킨다. 이 문제는 버전 관리와 벡터 시계(vector clock)로 해결한다.
+- **데이터 버전 관리:** 
+    - **벡터 시계**로 데이터 버전을 추적하고 충돌을 해소한다.
+    - 버전 관리란 데이터를 변경할 때마다 해당 데이터의 새로운 버전을 만드는 것을 말한다. 각 버전은 변경할 수 없다.
         <div>
-        <img src="./images/consistent-server.png"   alt="Consisten hashing" width="400">
-        <img src="./images/inconsistent-server.png"   alt="Inconsistent server" height="230">
+        <img src="./images/consistent-server.png"   alt="일관된 서버" width="400">
+        <img src="./images/inconsistent-server.png"   alt="불일치 서버" height="230">
         </div>
     
-    - Server 1 changes the name , and server 2 also changes the name. These two changes are performed simultaneously. Now, we have conflicting values, called versions v1 and v2.
+    - 서버 1이 이름을 바꾸고, 서버 2도 이름을 바꾼다. 두 변경이 동시에 일어나면 v1과 v2라는 서로 충돌하는 두 버전이 생긴다.
 
 
-- **Vector Clock**
-    1. **Setup**: A vector clock is a [server, version] pair associated with a data item. It can be used to check
-        if one version precedes, succeeds, or in conflict with others.
-        - Assume a vector clock represented by D([S1, v1], [S2, v2], …, [Sn, vn]), If data item D is written to server
-        Si, the system must perform one of the following tasks.
-        - Where: `D` is the data item.`Si` is the server identifier.`vi` is the version counter for the data at server `Si`.
+- **벡터 시계**
+    1. **구성**: 벡터 시계는 데이터에 붙는 [서버, 버전] 순서쌍이다. 어떤 버전이 다른 버전보다 앞서는지, 뒤처지는지, 충돌하는지 판별하는 데 쓴다.
+        - 벡터 시계를 D([S1, v1], [S2, v2], …, [Sn, vn])로 표현한다고 하자. 데이터 D를 서버 Si에 기록하면 시스템은 아래 작업 중 하나를 수행한다.
+        - 여기서 `D`는 데이터, `Si`는 서버 식별자, `vi`는 서버 `Si`에 있는 데이터의 버전 카운터다.
 
-    2. **Updating the Vector Clock:**  When a data item is modified at a server:
-        - If the server exists in the vector clock, its version counter is incremented.
-        - Otherwise, a new entry is added to the vector clock.
+    2. **벡터 시계 갱신:** 서버에서 데이터가 변경되면:
+        - 해당 서버가 벡터 시계에 이미 있으면 버전 카운터를 1 증가시킨다.
+        - 없으면 벡터 시계에 새 항목을 추가한다.
 
-    3. **Conflict Detection:**
-        - **No Conflict:** A version X is an ancestor of version Y if all counters in X are less than or equal to those in Y.
-        - **Conflict Exists:** Two versions are siblings if there is at least one counter in Y that is less than its counterpart in X.
+    3. **충돌 감지:**
+        - **충돌 없음:** 버전 X의 모든 카운터가 버전 Y의 해당 카운터보다 작거나 같으면, X는 Y의 이전 버전이다.
+        - **충돌 있음:** Y의 카운터 중 X의 해당 카운터보다 작은 것이 하나라도 있으면, 두 버전은 서로 형제(sibling) 관계, 즉 충돌 관계다.
 
-    4. **Conflict Resolution:** When conflicts are detected (sibling versions), the system relies on application-specific logic or client intervention to   reconcile the data.
+    4. **충돌 해소:** 충돌(형제 버전)이 감지되면 시스템은 애플리케이션별 로직이나 클라이언트의 개입으로 데이터를 조정한다.
 
         <p align="center">
-        <img src="./images/vector-clock.png"  alt="Server hashing" width="500">
+        <img src="./images/vector-clock.png"  alt="벡터 시계" width="500">
         </p>
 
-- **Challenges:**
-  - Increased complexity for clients.
-  - Vector clock size may grow with many updates, requiring trimming strategies to limit its size.
+- **문제점:**
+  - 클라이언트 구현이 복잡해진다.
+  - 갱신이 많아지면 벡터 시계 크기가 커질 수 있으므로, 크기를 제한하는 정리(trimming) 전략이 필요하다.
 
 
-### 5. Handling Failures
+### 5. 장애 처리
 
-#### a. Failure Detection
-It is insufficient to believe that a server is down because another server says so.Usually, it requires at least two independent sources of information to mark a server down.
-- **Gossip Protocol:**
+#### a. 장애 감지
+다른 서버 한 대가 어떤 서버가 다운되었다고 말한다고 해서 바로 장애로 판단하기에는 부족하다. 보통 독립된 정보원 두 곳 이상이 같은 내용을 알려야 서버를 장애 상태로 표시한다.
+- **가십 프로토콜(gossip protocol):**
     <div style="margin-left:3rem">
-        <img src="./images/gossip-protocol.png"  alt="Gossip protocol" width="600">
+        <img src="./images/gossip-protocol.png"  alt="가십 프로토콜" width="600">
     </div>
 
-    - Each node maintains member IDs and heartbeat counters.
-    - Each node periodically increments its heartbeat counter.
-    - Each node periodically sends heartbeats to a set of random nodes.
-    - If the heartbeat has not increased for more than predefined periods, the member is
-    considered as offline
+    - 각 노드는 멤버 ID와 박동 카운터(heartbeat counter) 목록을 유지한다.
+    - 각 노드는 주기적으로 자신의 박동 카운터를 증가시킨다.
+    - 각 노드는 무작위로 선정한 노드들에게 주기적으로 박동 카운터 목록을 보낸다.
+    - 미리 정한 시간 동안 박동 카운터가 증가하지 않은 멤버는 장애 상태로 간주한다.
 
 
 
-#### b. Temporary Failures
-- **Sloppy Quorum:** Use healthy nodes to maintain operations temporarily.
+#### b. 일시적 장애 처리
+- **느슨한 정족수(sloppy quorum):** 정상 노드를 활용해 일시적으로 운영을 유지한다.
         <p align="center">
-        <img src="./images/sloppy-quorum.png"   alt="Sloppy Quorum" width="400">
+        <img src="./images/sloppy-quorum.png"   alt="느슨한 정족수" width="400">
         </p>
 
-    - After detecting failures, the system needs to deploy certain mechanisms to ensure availability
-    - Instead of enforcing the quorum requirement, the system chooses the first W healthy servers for writes and first R
-    healthy servers for reads on the hash ring. 
-    - Offline servers are ignored. If a server is unavailable, another server will process requests temporarily
+    - 장애를 감지한 뒤에는 가용성을 보장하기 위한 장치가 필요하다.
+    - 정족수 요구 사항을 강제하는 대신, 해시 링에서 쓰기 연산은 정상 서버 W대를, 읽기 연산은 정상 서버 R대를 먼저 골라 수행한다.
+    - 장애 서버는 무시한다. 어떤 서버가 응답하지 않으면 다른 서버가 일시적으로 요청을 대신 처리한다.
 
 
-- **Hinted Handoff:** Offline servers catch up with changes upon recovery.
-    - When the down server is up, changes will be pushed back to achieve data consistency
+- **단서 후 임시 위탁(hinted handoff):** 장애 서버는 복구된 뒤 그동안의 변경 사항을 따라잡는다.
+    - 장애 서버가 복구되면 그동안의 변경 사항을 일괄 반영해 데이터 일관성을 회복한다.
 
-#### c. Permanent Failures
-- Use **Merkle Trees** for efficient synchronization between replicas.
-    A **Merkle Tree** (or hash tree) is a data structure to efficiently detect and resolve inconsistencies between replicas during permanent failures. 
+#### c. 영구 장애 처리
+- 사본 간 동기화를 효율적으로 하기 위해 **머클 트리(Merkle tree)** 를 사용한다.
+    **머클 트리**(해시 트리)는 영구 장애가 났을 때 사본 간 불일치를 효율적으로 찾아 해소하기 위한 자료 구조다.
 
-- Working
-    1. **Structure:**
-        - **Leaf Nodes** store the hash of individual data blocks.
-        - **Non-Leaf Nodes** store the hash of their child nodes.
-        - The **root hash** represents the combined state of all data in the tree.
+- 동작 방식
+    1. **구조:**
+        - **단말 노드**는 개별 데이터 블록의 해시를 저장한다.
+        - **비단말 노드**는 자식 노드들의 해시를 저장한다.
+        - **루트 해시**는 트리에 담긴 전체 데이터의 상태를 나타낸다.
 
-    2. **Building a Merkle Tree:**
-        - **Step 1:** Divide the key space into buckets.
+    2. **머클 트리 만들기:**
+        - **1단계:** 키 공간을 버킷으로 나눈다.
             
-            <img src="./images/key-bucket.png"   alt="Key Bucket" width="500">
+            <img src="./images/key-bucket.png"   alt="키 버킷" width="500">
 
-        - **Step 2:** Hash each key in a bucket using uniform hashing.
+        - **2단계:** 버킷에 포함된 각 키를 균등 분포 해시 함수로 해싱한다.
 
-            <img src="./images/hash-key-bucket.png"   alt="Hash Key Bucket" width="500">
+            <img src="./images/hash-key-bucket.png"   alt="해시 키 버킷" width="500">
 
-        - **Step 3:** Create a single hash for each bucket.
+        - **3단계:** 버킷별로 해시 값 하나를 만든다.
         
-            <img src="./images/hash-bucket.png"   alt="Hash Bucket" width="500">
+            <img src="./images/hash-bucket.png"   alt="해시 버킷" width="500">
 
-        - **Step 4:** Combine hashes of buckets to compute higher-level hashes, culminating in the root hash.
+        - **4단계:** 버킷 해시들을 결합해 상위 해시를 계산하고, 최종적으로 루트 해시를 만든다.
 
-            <img src="./images/merkel-tree.png"   alt="Merkel Tree" width="500">
-
-
-
-    3. **Synchronization:**
-        - To synchronize two replicas:
-            - Compare their root hashes.
-            - If the root hashes match, the replicas are consistent.
-            - If the root hashes differ, compare child hashes recursively to identify inconsistent buckets.
-        - Only the inconsistent data is synchronized.
-
-- Advantages
-    - **Efficiency:** Only inconsistent data is synchronized, reducing data transfer.
-    - **Scalability:** Effective for large datasets with minimal synchronization overhead.
-    - **Reliability:** Ensures data consistency across replicas.
+            <img src="./images/merkel-tree.png"   alt="머클 트리" width="500">
 
 
-### 6. Handling Data Center Outages
-- Replicate data across multiple data centers to ensure availability during outages.
+
+    3. **동기화:**
+        - 두 사본을 동기화하려면:
+            - 두 사본의 루트 해시를 비교한다.
+            - 루트 해시가 같으면 두 사본은 일치한다.
+            - 루트 해시가 다르면 자식 해시를 재귀적으로 비교해 불일치가 있는 버킷을 찾는다.
+        - 불일치가 있는 데이터만 동기화한다.
+
+- 장점
+    - **효율성:** 불일치 데이터만 동기화하므로 전송량이 줄어든다.
+    - **규모 확장성:** 대규모 데이터에서도 동기화 부담이 적다.
+    - **신뢰성:** 사본 간 데이터 일관성을 보장한다.
+
+
+### 6. 데이터 센터 장애 처리
+- 데이터 센터 장애 중에도 가용성을 유지하려면 데이터를 여러 데이터 센터에 다중화한다.
 
 ---
 
-## Write and Read Paths
-### 1. Write Path (Based on Cassandra architecture)
+## 쓰기 경로와 읽기 경로
+### 1. 쓰기 경로(Cassandra 아키텍처 기준)
 
 <div style="margin-left:3rem">
-    <img src="./images/write-path.png"   alt="Hash Bucket" width="500">
+    <img src="./images/write-path.png"   alt="쓰기 경로" width="500">
 </div>
 
-- Persist the write in a **commit log**.
-- Save data to a **memory cache**.
-- Flush data to **SSTable** (Sorted String Table) on disk when cache is full.
+- 쓰기 요청을 **커밋 로그(commit log)** 에 기록한다.
+- 데이터를 **메모리 캐시**에 저장한다.
+- 메모리 캐시가 가득 차면 데이터를 디스크의 **SSTable**(Sorted String Table)로 내보낸다(flush).
 
    
 
-### 2. Read Path
+### 2. 읽기 경로
 <div style="margin-left:3rem">
-    <img src="./images/read-path.png"   alt="Hash Bucket" width="500">
-    <img src="./images/read-path-without-cache.png"   alt="Hash Bucket" width="500">
+    <img src="./images/read-path.png"   alt="읽기 경로" width="500">
+    <img src="./images/read-path-without-cache.png"   alt="캐시에 데이터가 없을 때의 읽기 경로" width="500">
 </div>
 
-- Check **memory cache** for the data.
-- If absent, use a **Bloom Filter** to locate the data in SSTables.
-- Retrieve and return the data.
+- 먼저 **메모리 캐시**에 데이터가 있는지 확인한다.
+- 없으면 **블룸 필터(Bloom filter)** 로 데이터가 어느 SSTable에 있는지 찾는다.
+- 데이터를 읽어 반환한다.
 
 
 ---
 
-## Final Architecture
+## 최종 아키텍처
 
 <p align="center">
-<img src="./images/final-architecture.png"   alt="Hash Bucket" width="500">
+<img src="./images/final-architecture.png"   alt="최종 아키텍처" width="500">
 </p>
 
 
--  Clients communicate with the key-value store through simple APIs: get(key) and put(key,
-value).
-- A coordinator is a node that acts as a proxy between the client and the key-value store.
-- Nodes are distributed on a ring using consistent hashing.
-- The system is completely decentralized so adding and moving nodes can be automatic.
-- Data is replicated at multiple nodes.
-- There is no single point of failure as every node has the same set of responsibilities.
+-  클라이언트는 get(key)와 put(key, value)라는 단순한 API로 키-값 저장소와 통신한다.
+- 중재자(coordinator)는 클라이언트와 키-값 저장소 사이에서 프록시 역할을 하는 노드다.
+- 노드는 안정 해시를 사용해 해시 링 위에 분산된다.
+- 시스템이 완전히 분산되어 있어 노드를 자동으로 추가하거나 옮길 수 있다.
+- 데이터는 여러 노드에 다중화된다.
+- 모든 노드가 같은 책임을 지므로 단일 장애 지점(SPOF)이 없다.
 
 
