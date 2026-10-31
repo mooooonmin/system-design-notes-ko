@@ -1,143 +1,142 @@
-# Chapter 8: Design a URL Shortener
+# 8장: URL 단축기 설계
 
-## Introduction
-This chapter discusses the design of a URL shortening service like TinyURL. The system's main goals include **URL shortening**, **redirecting**, and **high scalability** to handle large traffic volumes.
+## 소개
+이 장에서는 TinyURL 같은 URL 단축 서비스의 설계를 다룬다. 시스템의 주요 목표는 **URL 단축**, **리디렉션**, 그리고 많은 트래픽을 감당할 **높은 규모 확장성**이다.
 
-### Requirements
-- Shortened URLs must be **unique** and as **short as possible**.
-- Handle **100 million URL generations per day** with a 10-year support capacity.
-- Support **efficient read operations** with a 10:1 read-to-write ratio.
-- Store 365 billion records, requiring approximately **365 TB** of storage over 10 years.
+### 요구 사항
+- 단축 URL은 **유일**해야 하며 **가능한 한 짧아야** 한다.
+- **하루 1억 개의 URL 생성**을 처리하고, 10년 동안 운영할 수 있어야 한다.
+- 읽기 대 쓰기 비율이 10:1이므로 **읽기 연산을 효율적으로** 지원해야 한다.
+- 10년 동안 3,650억 개의 레코드를 저장해야 하며, 약 **365 TB**의 저장 공간이 필요하다.
 
 ---
 
-## Step 1: High-Level Design
+## 1단계: 개략적인 설계
 
-### API Endpoints
-1. **URL Shortening:**  
-   - Endpoint: `POST api/v1/data/shorten`  
-   - Parameters: `{longUrl: longURLString}`  
-   - Returns: `shortURL`
+### API 엔드포인트
+1. **URL 단축:**  
+   - 엔드포인트: `POST api/v1/data/shorten`  
+   - 인자: `{longUrl: longURLString}`  
+   - 반환: `shortURL`
 
-2. **URL Redirecting:**  
-   - Endpoint: `GET api/v1/shortUrl`  
-   - Returns: `longURL` for redirection.
+2. **URL 리디렉션:**  
+   - 엔드포인트: `GET api/v1/shortUrl`  
+   - 반환: 리디렉션할 `longURL`
 
     <p align="center">
-    <img src="./images/url-redirection.png" alt="URL Redirection" width="600">
+    <img src="./images/url-redirection.png" alt="URL 리디렉션" width="600">
     </p>
 
-### URL Redirection
-- **301 Redirect:**  A 301 redirect shows that the requested URL is “permanently” moved to the long URL. The browser caches the response, and
-subsequent requests for the same URL will not be sent to the URL shortening service.
-- **302 Redirect:** Temporary; useful for analytics like tracking clicks.
+### URL 리디렉션
+- **301 리디렉션:** 요청한 URL이 긴 URL로 '영구적으로' 이동했음을 뜻한다. 브라우저가 응답을 캐시하므로, 같은 URL에 대한 이후 요청은 URL 단축 서비스로 보내지 않는다.
+- **302 리디렉션:** '일시적으로' 이동했음을 뜻한다. 클릭 추적 같은 분석에 유용하다.
 
-### URL Shortening
+### URL 단축
 <p align="center">
-    <img src="./images/url-shortening.png" alt="URL Shortening" width="400">
+    <img src="./images/url-shortening.png" alt="URL 단축" width="400">
 </p>
 
-- Use a **hash function** to generate a short URL, mapping long URLs to unique shortened versions.
-- The hash function must satisfy the following requirements:
-    - Each longURL must be hashed to one hashValue.
-    - Each hashValue can be mapped back to the longURL.
+- **해시 함수**를 사용해 긴 URL을 유일한 단축 URL로 대응시킨다.
+- 해시 함수는 다음 요구 사항을 만족해야 한다.
+    - 각 긴 URL은 하나의 해시 값으로 변환되어야 한다.
+    - 각 해시 값은 원래의 긴 URL로 되돌릴 수 있어야 한다.
     
 
 ---
 
-## Step 2: Deep Dive into Design
+## 2단계: 상세 설계
 
-### Data Model
-Store `<shortURL, longURL>` mappings in a relational database to optimize memory usage. The table schema includes:
-- `id` (primary key),
-- `shortURL`,
-- `longURL`.
+### 데이터 모델
+메모리 사용을 최적화하기 위해 `<shortURL, longURL>` 대응 관계를 관계형 데이터베이스에 저장한다. 테이블 스키마는 다음과 같다.
+- `id`(기본 키)
+- `shortURL`
+- `longURL`
 
-    <img src="./images/table-schema.png" alt="Table Schema" width="300">
+    <img src="./images/table-schema.png" alt="테이블 스키마" width="300">
 
-### Hash Function
-#### 1. Base 62 Conversion:
-- Encodes numbers using characters `[0-9, a-z, A-Z]`, providing **62 possible characters**.
-- Base conversion is another approach commonly used for URL shorteners. 
-- A unique id can be assigned to the short url and ID can be base 62 converted to get the short URL.
-- A 7-character hash supports up to **3.5 trillion unique URLs**, enough for 365 billion URLs.
+### 해시 함수
+#### 1. 62진법 변환(base 62 conversion)
+- `[0-9, a-z, A-Z]` 문자를 사용해 숫자를 인코딩하므로 **사용할 수 있는 문자는 62개**다.
+- 진법 변환은 URL 단축기에서 흔히 쓰는 또 다른 방법이다.
+- 단축 URL마다 유일한 ID를 할당하고, 이 ID를 62진법으로 변환해 단축 URL을 얻는다.
+- 7자리 해시로 최대 **약 3.5조 개의 유일한 URL**을 만들 수 있으므로 3,650억 개를 충분히 감당한다.
 
-**Example:**  
-Convert ID `2009215674938` to Base 62:
-- `2009215674938` → `zn9edcu`.
+**예시:**  
+ID `2009215674938`을 62진법으로 변환하면:
+- `2009215674938` → `zn9edcu`
 
-#### 2. Hash + Collision Resolution:
-- Use hash functions like CRC32, MD5, or SHA-1.
+#### 2. 해시 후 충돌 해소
+- CRC32, MD5, SHA-1 같은 해시 함수를 사용한다.
 
-    <img src="./images/hash-function.png" alt="Hash Function" width="500">
+    <img src="./images/hash-function.png" alt="해시 함수" width="500">
 
-- One approach is to collect the first 7 characters of a hash value; however, this method can lead to hash collisions.
-- To resolve collisions,recursively append a new predefined string until no more collision but this can be expensive.
-- Resolve collisions with **Bloom Filters** for efficient lookup.
+- 해시 값의 처음 7자리만 취하는 방법이 있지만, 이 경우 해시 충돌이 생길 수 있다.
+- 충돌을 해소하려면 충돌이 없어질 때까지 미리 정한 문자열을 재귀적으로 덧붙이면 되지만, 비용이 많이 들 수 있다.
+- **블룸 필터(Bloom filter)** 로 효율적으로 조회해 충돌을 해소한다.
 
     <p align="center">
-    <img src="./images/url-lookup.png" alt="URL Lookup" width="500">
+    <img src="./images/url-lookup.png" alt="URL 조회" width="500">
     </p>
 
-### Comparison
+### 비교
 
--  **Hash + Collision Resolution:**
-    - Fixed short URL length
-    - Does not need a unique ID generator
-    - Collision is possbile and needs resolution
-    - Not possible to find the next available short URL because it does not depend on ID
+-  **해시 후 충돌 해소:**
+    - 단축 URL 길이가 고정된다.
+    - 유일 ID 생성기가 필요 없다.
+    - 충돌이 생길 수 있어 해소 전략이 필요하다.
+    - ID에 의존하지 않으므로 다음에 쓸 수 있는 단축 URL을 알아낼 수 없다.
 
-- **Base 62 Conversion**
-    - The length is not fixed and goes up with ID
-    - It needs a unique ID generator
-    - Collision is not possbile
-    - Easy to find the next short URL if ID increments by 1 (Can be a security concern)
+- **62진법 변환**
+    - 길이가 고정되지 않고 ID가 커지면 함께 길어진다.
+    - 유일 ID 생성기가 필요하다.
+    - 충돌이 생기지 않는다.
+    - ID가 1씩 증가한다면 다음 단축 URL을 쉽게 알아낼 수 있다(보안상 문제가 될 수 있음).
 
 
 ---
 
-### URL Shortening Flow
+### URL 단축 흐름
 
 <p align="center">
-    <img src="./images/url-shortening-flow.png" alt="URL Shortening" width="500">
+    <img src="./images/url-shortening-flow.png" alt="URL 단축 흐름" width="500">
 </p>
 
-1. Check if `longURL` exists in the database.
-2. If found, return the existing `shortURL`.
-3. Otherwise:
-   - Generate a unique ID using a **distributed ID generator**.
-   - Convert the ID to `shortURL` using Base 62.
-   - Store the `<id, shortURL, longURL>` mapping in the database.
+1. `longURL`이 데이터베이스에 있는지 확인한다.
+2. 있으면 기존 `shortURL`을 반환한다.
+3. 없으면:
+   - **분산 ID 생성기**로 유일한 ID를 만든다.
+   - 62진법 변환으로 ID를 `shortURL`로 바꾼다.
+   - `<id, shortURL, longURL>` 대응 관계를 데이터베이스에 저장한다.
 
 
 
 ---
 
-### URL Redirecting Flow
+### URL 리디렉션 흐름
 <p align="center">
-    <img src="./images/url-redirecting-flow.png" alt="URL Shortening" width="600">
+    <img src="./images/url-redirecting-flow.png" alt="URL 리디렉션 흐름" width="600">
 </p>
 
-1. User clicks a `shortURL`.
-2. Query `<shortURL, longURL>` mapping:
-   - Check the **cache** first for faster access.
-   - If not in the cache, query the database.
-3. Redirect the user to `longURL`.
+1. 사용자가 `shortURL`을 클릭한다.
+2. `<shortURL, longURL>` 대응 관계를 조회한다.
+   - 빠른 접근을 위해 먼저 **캐시**를 확인한다.
+   - 캐시에 없으면 데이터베이스를 조회한다.
+3. 사용자를 `longURL`로 리디렉션한다.
 
 
 ---
 
-## Additional Considerations
-### Rate Limiter
-- Prevent abuse by setting limits on requests per IP.
+## 추가 고려 사항
+### 처리율 제한 장치
+- IP별 요청 수를 제한해 악용을 막는다.
 
-### Scalability
-1. **Web Tier:** Stateless, scalable by adding/removing web servers.
-2. **Database Tier:** Use replication and sharding.
+### 규모 확장성
+1. **웹 계층:** 무상태이므로 웹 서버를 추가·제거해 규모를 조정할 수 있다.
+2. **데이터베이스 계층:** 다중화와 샤딩을 사용한다.
 
-### Analytics
-- Collect data like click rates, source, and timestamps for business insights.
+### 데이터 분석
+- 클릭 수, 유입 경로, 시각 같은 데이터를 수집해 비즈니스 통찰을 얻는다.
 
-### High Availability and Reliability
-- Ensure consistent and reliable services using database replication and fault-tolerant design.
+### 가용성, 일관성, 안정성
+- 데이터베이스 다중화와 결함 감내 설계로 일관되고 안정적인 서비스를 보장한다.
 
